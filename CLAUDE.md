@@ -38,7 +38,11 @@ it reads the global `view = { name, arg }` and dispatches to `renderHome`,
 `renderExercise`. Navigate with `go(name, arg)`, never by mutating `view` directly.
 
 **Persistence**: `load()`/`save()` are the only functions touching
-`localStorage`. `defaultState()` defines the shape:
+`localStorage`. `load()` parses the stored JSON with a reviver that strips any
+`__proto__` key before it reaches `Object.assign(defaultState(), parsed)` — without
+it, `Object.assign` would let a crafted `__proto__` value repoint `state`'s
+prototype. Keep that reviver if you touch `load()`. `defaultState()` defines the
+shape:
 ```
 { programs, customExercises, history, active, settings }
 ```
@@ -58,21 +62,21 @@ write to `state` on `oninput` — they do NOT trigger a re-render. Re-rendering 
 whole session on every keystroke would steal focus mid-type. Re-render only
 happens on structural changes (ticking a set done, adding/removing a set).
 
-**The rest timer** (`timer` object, ~line 200) is independent of the render cycle:
+**The rest timer** (`timer` object, ~line 204) is independent of the render cycle:
 it runs its own `setInterval` and repaints `#timerBar` directly via DOM lookups,
 not through `render()`. It restarts automatically whenever a set is ticked done
 (see the `data-done` handler in `renderSession`). `document.body` gets an
 `in-session` class while it's visible so page content gets extra bottom padding
 and never sits under the fixed timer bar (see `--timer-h` in `styles.css`).
 
-**Drag-to-reorder** (`enableDragReorder`, ~line 313) is a generic helper: pass a
+**Drag-to-reorder** (`enableDragReorder`, ~line 314) is a generic helper: pass a
 container and an `onReorder(from, to)` callback. It's pointer-event based and
 deliberately attaches `pointermove`/`pointerup` to `window` (not the grip element)
 because the pointer routinely leaves the grip mid-drag — binding to the grip alone
 drops events. Only `.grip` children start a drag (`touch-action: none`); the rest
 of each `.drag-item` card keeps normal scroll behavior.
 
-**Performance/PR math** (~lines 88–199) is the layer between raw session data and
+**Performance/PR math** (~lines 97–199) is the layer between raw session data and
 the History views:
 - `exerciseSeries(exerciseId)` — one point per session an exercise appears in,
   oldest first, with weight/reps/e1rm/volume/rep totals precomputed.
@@ -89,7 +93,7 @@ the History views:
 - `METRICS` is the single source of truth for chart/stat labels, getters, and
   unit suffixes — add a new trackable metric here, not ad hoc in a render function.
 
-**The chart** (`chartSVG`, ~line 413) is hand-rolled inline SVG, not a charting
+**The chart** (`chartSVG`, ~line 414) is hand-rolled inline SVG, not a charting
 library — there are no dependencies in this project at all. `chartMetric` and
 `chartSel` are module-level state for the currently-viewed exercise's chart
 (which metric, which point is tapped); they're intentionally not part of
@@ -114,3 +118,8 @@ fixed top bar, an optional fixed rest-timer bar, and a fixed bottom tab bar
 (`#tabbar`). `[hidden]` is used to show/hide the timer bar; note the CSS has an
 explicit `#timerBar[hidden] { display: none; }` rule because `#timerBar`'s own
 `display: flex` would otherwise win over the `hidden` attribute.
+
+## Version control
+
+This is a plain local git repo on `main` — no remote, no CI, no hooks. There's
+nothing to build or test before committing.
