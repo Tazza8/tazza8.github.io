@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d1117">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Iron — Gym Tracker</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏋️</text></svg>">
+</head>
+<body>
+
+<header id="topbar">
+  <button id="backBtn" class="icon-btn" hidden aria-label="Back">‹</button>
+  <h1 id="title">Iron</h1>
+  <button id="settingsBtn" class="icon-btn" aria-label="Settings">⚙</button>
+</header>
+
+<main id="app"></main>
+
+<!-- Rest timer, visible only during a session -->
+<div id="timerBar" hidden>
+  <div class="timer-left">
+    <div id="timerLabel">Rest</div>
+    <div id="timerValue">0:00</div>
+  </div>
+  <div class="timer-actions">
+    <button class="t-btn" data-adjust="-15">−15</button>
+    <button class="t-btn" data-adjust="15">+15</button>
+    <button class="t-btn primary" id="timerToggle">Start</button>
+    <button class="t-btn" id="timerReset">Reset</button>
+  </div>
+</div>
+
+<nav id="tabbar">
+  <button class="tab" data-view="home"><span>▤</span>Programs</button>
+  <button class="tab" data-view="session"><span>▶</span>Workout</button>
+  <button class="tab" data-view="history"><span>◷</span>History</button>
+</nav>
+
+<div id="modalRoot"></div>
+
+<script src="exercises.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
