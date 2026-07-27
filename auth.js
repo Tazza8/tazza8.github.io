@@ -8,8 +8,22 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_
 
 let session = null;
 
-/* ---------- sign-in screen ---------- */
-let signInStatus = { sending: false, sent: false, error: null, email: '' };
+/* ---------- sign-in screen ----------
+   The same request sends both a link and a 6-digit code, and either one
+   signs you in. The code isn't a convenience — on iOS it's the only thing
+   that works once the app is on the home screen. A standalone web app there
+   gets its own storage partition, and a magic link can only ever open in
+   Safari, so following the link writes the session into Safari's storage
+   where the installed app can't see it; it just sits on the sign-in screen
+   forever. Typing the code into the app keeps the whole exchange inside the
+   app's own partition. iOS gives us no way to hand a session across, and no
+   way to make the link open in the installed app, so don't "simplify" this
+   back down to a link-only flow.
+
+   Note the code only reaches the user if the Supabase project's Magic Link
+   email template renders {{ .Token }} — the code is always minted server
+   side, but the default template shows the link alone. */
+let signInStatus = { sending: false, sent: false, error: null, email: '', code: '', verifying: false };
 
 // A failed magic-link redirect (expired/already-used link, disallowed
 // redirect URL, etc.) comes back as `#error=...&error_description=...`
@@ -57,7 +71,16 @@ function renderSignIn(app) {
       ${s.sent ? `
         <div class="card" style="text-align:left">
           <div class="title" style="font-size:15px">Check your email</div>
-          <div class="sub">We sent a sign-in link to ${esc(s.email)}. Open it on this device to continue.</div>
+          <div class="sub">We sent a code and a sign-in link to ${esc(s.email)}.</div>
+          <label class="field" style="margin:16px 0 12px">
+            <span>Sign-in code</span>
+            <input type="text" id="otp" inputmode="numeric" autocomplete="one-time-code"
+                   maxlength="6" placeholder="000000" value="${esc(s.code)}"
+                   style="text-align:center;letter-spacing:.4em;font-size:22px;font-variant-numeric:tabular-nums">
+          </label>
+          ${s.error ? `<div class="sub" style="color:var(--danger);margin:-4px 0 12px">${esc(s.error)}</div>` : ''}
+          <button class="btn primary block" id="verify" ${s.verifying ? 'disabled' : ''}>${s.verifying ? 'Checking…' : 'Sign in'}</button>
+          <div class="sub" style="margin-top:12px">Tapping the link instead opens Safari and signs you in there — if you added Evolv to your home screen, use the code so you're signed in here.</div>
           <button class="btn sm ghost block" id="resend" style="margin-top:12px">Use a different email</button>
         </div>
       ` : `
@@ -71,8 +94,25 @@ function renderSignIn(app) {
     </div>`;
 
   if (s.sent) {
+    const codeInput = $('#otp', app);
+    codeInput.focus();
+    const verify = async () => {
+      const token = codeInput.value.trim();
+      if (token.length < 6) return;
+      signInStatus = { ...s, code: token, verifying: true, error: null };
+      renderSignIn(app);
+      const { error } = await supabaseClient.auth.verifyOtp({ email: s.email, token, type: 'email' });
+      // On success onAuthStateChange fires and re-renders the whole app, so
+      // there's nothing to do here but surface a bad/expired code.
+      if (error) {
+        signInStatus = { ...s, code: token, verifying: false, error: error.message };
+        renderSignIn(app);
+      }
+    };
+    codeInput.onkeydown = (e) => { if (e.key === 'Enter') verify(); };
+    $('#verify', app).onclick = verify;
     $('#resend', app).onclick = () => {
-      signInStatus = { sending: false, sent: false, error: null, email: s.email };
+      signInStatus = { sending: false, sent: false, error: null, email: s.email, code: '', verifying: false };
       renderSignIn(app);
     };
     return;
@@ -83,15 +123,15 @@ function renderSignIn(app) {
   const submit = async () => {
     const email = input.value.trim();
     if (!email) return;
-    signInStatus = { sending: true, sent: false, error: null, email };
+    signInStatus = { sending: true, sent: false, error: null, email, code: '', verifying: false };
     renderSignIn(app);
     const { error } = await supabaseClient.auth.signInWithOtp({
       email,
       options: { emailRedirectTo: location.origin + location.pathname },
     });
     signInStatus = error
-      ? { sending: false, sent: false, error: error.message, email }
-      : { sending: false, sent: true, error: null, email };
+      ? { sending: false, sent: false, error: error.message, email, code: '', verifying: false }
+      : { sending: false, sent: true, error: null, email, code: '', verifying: false };
     renderSignIn(app);
   };
   input.onkeydown = (e) => { if (e.key === 'Enter') submit(); };

@@ -121,6 +121,29 @@ renderSignIn(app)`; nothing else in `app.js` runs until a session exists.
   per keystroke. If the debounced push fails (offline), the local write is
   never lost; `syncPending` stays `true` and a `window` `'online'` listener
   retries.
+- **Sign-in is code-first, not link-first, because of iOS.** A web app added
+  to the iOS home screen runs in a storage partition of its own, and a magic
+  link can only ever open in Safari — so following the link writes the session
+  into Safari's storage, the installed app never sees it, and it sits on the
+  sign-in screen forever. There is no iOS mechanism to hand a session between
+  the two, and no way to make a link open in an installed web app. The one
+  exchange that stays inside the app's partition is typing the 6-digit code,
+  which is why `renderSignIn`'s sent state leads with a code field and
+  `verifyOtp({ email, token, type: 'email' })`. The link still works and is
+  fine in Safari; don't collapse this back to link-only.
+- **Two settings live in the Supabase dashboard, not this repo**, and both
+  have bitten us:
+  - **Authentication → URL Configuration.** Site URL must be
+    `https://tazza8.github.io`, with `https://tazza8.github.io/**` and
+    `http://localhost:4173/**` both in Redirect URLs. `emailRedirectTo` is
+    validated against that allow-list, and an unlisted URL doesn't error —
+    Supabase silently falls back to Site URL. Left at the default
+    (`http://localhost:3000`), every magic link from the live site points at
+    localhost.
+  - **Authentication → Emails → Magic Link template** must render
+    `{{ .Token }}`. The code is always minted server side, but the stock
+    template shows only the link — without the token in the template there's
+    no code for anyone to type, and the iOS flow above is dead.
 - **New accounts**: `loadForUser` creates an empty Supabase row on first
   sign-in, then calls `offerLegacyImport()`, which checks the *old* flat
   `iron.gymtracker.v1` key (pre-accounts local data) and offers a one-time
