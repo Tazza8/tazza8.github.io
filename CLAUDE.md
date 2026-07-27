@@ -73,7 +73,12 @@ defines the shape:
 parsed — it uses a reviver that strips any `__proto__` key before the result
 reaches `Object.assign(defaultState(), parsed)`, so a crafted payload can't
 repoint `state`'s prototype. Keep that reviver if you touch it; it's shared by
-both the per-user cache read and the legacy-import read (see below).
+both the per-user cache read and the legacy-import read (see below). Data read
+back from Supabase (`row.data`) arrives pre-parsed by the Supabase client, so
+it can't go through `safeParse` directly — `stripProto(obj)` re-parses it via
+a `JSON.stringify`/`JSON.parse` round-trip using the same reviver, closing the
+same gap for that path too. Both share the `stripProtoReviver` function —
+don't duplicate the `k === '__proto__'` check inline elsewhere.
 
 ## Accounts & sync
 
@@ -95,6 +100,10 @@ renderSignIn(app)`; nothing else in `app.js` runs until a session exists.
   first three defines globals the next one needs at top-level execution time
   (not just inside functions, where order wouldn't matter) — don't reorder
   the `<script>` tags in `index.html` without checking this still holds.
+  `register-sw.js` loads last and is order-independent (it only calls
+  `navigator.serviceWorker.register()` on `window.load`, doesn't touch any
+  app globals) — it's a separate file rather than inline purely because of
+  the CSP (see **Security**), not because of load-order needs.
 - **Storage model**: one row per user in Supabase (`gymtracker_data`, see
   `supabase/schema.sql`) storing the exact same JSON blob as `state`, in a
   `jsonb` column. Row Level Security (`auth.uid() = user_id`) is what actually
@@ -214,6 +223,45 @@ entry that's supposed to represent the *fresh* version — silently
 reintroducing the exact staleness this file exists to prevent. Don't drop
 this when touching `sw.js`.
 
+## Security
+
+- **CSP**: `index.html` sets a `Content-Security-Policy` meta tag restricting
+  `script-src`/`connect-src`/`object-src`/`base-uri`/`form-action` to same-origin
+  plus the Supabase project's URL. `connect-src` must be kept in sync with
+  `SUPABASE_URL` in `supabase-config.js` if the project ever changes, or
+  Supabase calls will start failing silently (check for
+  `securitypolicyviolation` events / console CSP errors first if auth/sync
+  ever mysteriously stops working after a config change). `style-src` keeps
+  `'unsafe-inline'` because `app.js`/`auth.js` render lots of inline `style="`
+  attributes — removing it would need converting all of those to CSS classes.
+- **Inline scripts are not allowed under this CSP** — that's why service worker
+  registration lives in its own file, `register-sw.js`, instead of an inline
+  `<script>` block in `index.html`. Any future one-off inline script needs the
+  same treatment (its own file), not a CSP exception.
+- **Clickjacking is NOT mitigated, and can't be from here.** `frame-ancestors`
+  (the real fix) is silently ignored by browsers when delivered via a `<meta>`
+  tag — it only works as an actual HTTP response header, and GitHub Pages
+  doesn't support custom response headers. This is a known, accepted gap until
+  the app is hosted somewhere that does (e.g. a custom domain routed through
+  Cloudflare, which can inject the header). Don't try to "fix" this with a meta
+  tag or JS frame-busting — neither reliably works; it needs a different host.
+- **Row Level Security** (`auth.uid() = user_id`) and the `authenticated`-only
+  table grants (see `supabase/schema.sql`) are the real access-control boundary
+  for `gymtracker_data` — covered in **Accounts & sync** above. Verify these
+  haven't regressed with a plain `curl` against the REST endpoint using only
+  the anon key (no `Authorization` header) — it should 401 with "permission
+  denied", both for reads and writes.
+- **Branch protection** on `main` blocks force-pushes and branch deletion
+  (set via the GitHub API, not a repo file). Deliberately has no required PR
+  reviews or status checks — this repo's whole deploy model is "push to
+  `main` directly", and adding required reviews would break that.
+- Keep `vendor/supabase.js` reasonably current — check
+  `https://registry.npmjs.org/@supabase/supabase-js/latest` occasionally and
+  re-fetch from
+  `https://cdn.jsdelivr.net/npm/@supabase/supabase-js@<version>/dist/umd/supabase.js`
+  (pin an explicit version in the URL — the floating `@2` tag lags behind on
+  jsdelivr's CDN cache and isn't reliable for picking up the actual latest).
+
 ## Deployment
 
 GitHub Pages, serving directly from the `main` branch root — pushing to
@@ -226,5 +274,8 @@ data ever touches the repo.
 ## Version control
 
 Plain git repo on `main`, remote `origin` on GitHub
-(`Tazza8/tazza8.github.io`, public). No CI, no hooks, no required checks —
-pushing to `main` both is the deploy and needs nothing else to pass first.
+(`Tazza8/tazza8.github.io`, public). No CI, no hooks, no required status
+checks — pushing to `main` both is the deploy and needs nothing else to pass
+first. Branch protection blocks force-pushes/deletion (see **Security**) but
+does not require PRs or reviews, so direct pushes to `main` still work exactly
+as before.
