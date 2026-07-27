@@ -13,20 +13,26 @@
      somewhere that does (e.g. behind Cloudflare on a custom domain). -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://ulcwstgimeldwafueppt.supabase.co; object-src 'none'; base-uri 'self'; form-action 'self'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0d1117">
+<meta name="theme-color" content="#000000">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Evolv">
 <title>Evolv — Gym Tracker</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="stylesheet" href="styles.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏋️</text></svg>">
+<!-- The Evolv mark, same geometry as evolvMark() in brand.js. It has to carry
+     its own colours as literal hex (a data: URI can't see styles.css), so keep
+     these three stops in sync with --brand-1/2/3 if the ramp ever changes. -->
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='-14 -20 140 140'><defs><linearGradient id='g' gradientUnits='userSpaceOnUse' x1='10' y1='0' x2='102' y2='100'><stop offset='0' stop-color='%232fe0b6'/><stop offset='.5' stop-color='%232aa8f2'/><stop offset='1' stop-color='%236d5cf5'/></linearGradient></defs><g fill='url(%23g)'><path d='M22 0 L38 0 L14 48 L38 100 L22 100 L0 48 Z'/><path d='M30 0 L108 0 L97 21 L19 21 Z'/><path d='M16 40 L86 40 L78 56 L8 56 Z'/><path d='M25 75 L100 75 L112 100 L37 100 Z'/></g></svg>">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 </head>
 <body>
 
 <header id="topbar">
   <button id="backBtn" class="icon-btn" hidden aria-label="Back">‹</button>
+  <!-- Filled with the mark at boot; shown only on views with no back button,
+       so it occupies that slot and the title stays optically centred. -->
+  <div id="brand" hidden></div>
   <h1 id="title">Evolv</h1>
   <button id="settingsBtn" class="icon-btn" aria-label="Settings">⚙</button>
 </header>
@@ -59,6 +65,7 @@
 <script src="supabase-config.js"></script>
 <script src="auth.js"></script>
 <script src="exercises.js"></script>
+<script src="brand.js"></script>
 <script src="app.js"></script>
 <script src="register-sw.js"></script>
 </body>

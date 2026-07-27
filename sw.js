@@ -1,4 +1,4 @@
-const CACHE_NAME = 'evolv-v3';
+const CACHE_NAME = 'evolv-v4';
 const ASSETS = [
   '.',
   'index.html',
@@ -6,6 +6,7 @@ const ASSETS = [
   'app.js',
   'auth.js',
   'exercises.js',
+  'brand.js',
   'supabase-config.js',
   'vendor/supabase.js',
   'register-sw.js',

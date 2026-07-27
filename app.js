@@ -530,9 +530,18 @@ function chartSVG(series, metric, sel) {
   return `
   <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${METRICS[metric].label} over time">
     <defs>
-      <linearGradient id="goldFade" x1="0" x2="0" y1="0" y2="1">
-        <stop offset="0%" stop-color="#72926d" stop-opacity=".28"/>
-        <stop offset="100%" stop-color="#72926d" stop-opacity="0"/>
+      <!-- The line runs the brand ramp left-to-right across the plot; the fill
+           under it is the same ramp fading out downward. Stop colours come
+           from styles.css via the .chart-grad classes — see .evolv-mark for
+           the same trick. -->
+      <linearGradient id="brandLine" class="chart-grad" gradientUnits="userSpaceOnUse" x1="${padL}" x2="${W - padR}" y1="0" y2="0">
+        <stop class="g1" offset="0"/>
+        <stop class="g2" offset=".5"/>
+        <stop class="g3" offset="1"/>
+      </linearGradient>
+      <linearGradient id="brandFade" class="chart-grad" x1="0" x2="0" y1="0" y2="1">
+        <stop class="g2" offset="0" stop-opacity=".3"/>
+        <stop class="g3" offset="1" stop-opacity="0"/>
       </linearGradient>
     </defs>
     ${ticks.map((t) => `
@@ -573,12 +582,14 @@ function go(name, arg) {
 function render() {
   const app = $('#app');
   const back = $('#backBtn');
+  const brand = $('#brand');
   const settingsBtn = $('#settingsBtn');
   const tabbar = $('#tabbar');
 
   if (!session) {
     $('#title').textContent = 'Evolv';
     back.hidden = true;
+    brand.hidden = true;      // the sign-in screen has the full lockup already
     settingsBtn.hidden = true;
     tabbar.hidden = true;
     $('#timerBar').hidden = true;
@@ -592,6 +603,8 @@ function render() {
   document.body.classList.remove('signed-out');
 
   back.hidden = view.name === 'home' || view.name === 'history' || view.name === 'session';
+  brand.hidden = !back.hidden;
+  if (!brand.innerHTML) brand.innerHTML = evolvMark(21);
 
   document.querySelectorAll('.tab').forEach((t) => {
     const active = t.dataset.view === view.name ||
@@ -622,7 +635,7 @@ function renderHome(app) {
   if (!state.programs.length) {
     app.innerHTML = `
       <div class="empty">
-        <div class="big">🏋️</div>
+        <div class="big">${evolvMark(44)}</div>
         <div>No programs yet.</div>
         <div class="sub">Build one by picking the exercises you train.</div>
       </div>
@@ -1064,7 +1077,7 @@ function logHTML() {
         <div class="row between">
           <div class="grow">
             <div class="title truncate">${esc(s.programName || 'Workout')}
-              ${s.prs && s.prs.length ? `<span class="pb-flag">🏅 ${s.prs.length}</span>` : ''}</div>
+              ${s.prs && s.prs.length ? `<span class="pb-flag">${s.prs.length} PB</span>` : ''}</div>
             <div class="sub">${fmtDate(s.finishedAt || s.startedAt)} · ${doneSets(s)} sets · ${Math.round(v).toLocaleString()} ${unit()}
               ${prev ? ' · ' + deltaHTML(v, volume(prev), ' ' + unit()) : ''}</div>
           </div>
@@ -1213,7 +1226,7 @@ function showPRs(session) {
   back.className = 'modal-back';
   back.innerHTML = `
     <div class="modal">
-      <h3 style="color:var(--accent-soft)">🏅 ${session.prs.length} personal best${session.prs.length === 1 ? '' : 's'}</h3>
+      <h3 class="grad-text" style="font-size:20px">${session.prs.length} personal best${session.prs.length === 1 ? '' : 's'}</h3>
       ${session.prs.map((pr) => `
         <div class="row between" style="padding:9px 0;border-top:1px solid var(--line)">
           <div class="grow">
@@ -1257,7 +1270,7 @@ function renderHistoryDetail(app, id) {
               <div class="title truncate" style="font-size:15px">${esc(exerciseById(pr.exerciseId).name)}</div>
               <div class="sub">${PR_LABEL[pr.kind]}${pr.prev ? ' · was ' + fmtN(pr.prev) : ''}</div>
             </div>
-            <div class="pb-flag">🏅 ${prText(pr)}</div>
+            <div class="pb-flag">${prText(pr)}</div>
           </div>`).join('')}
       </div>` : ''}
 
