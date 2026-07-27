@@ -22,7 +22,8 @@ let session = null;
 
    Note the code only reaches the user if the Supabase project's Magic Link
    email template renders {{ .Token }} — the code is always minted server
-   side, but the default template shows the link alone. */
+   side, but the default template shows the link alone. Its length is a
+   project setting too (6–10 digits), which is why nothing here assumes one. */
 let signInStatus = { sending: false, sent: false, error: null, email: '', code: '', verifying: false };
 
 // A failed magic-link redirect (expired/already-used link, disallowed
@@ -75,7 +76,7 @@ function renderSignIn(app) {
           <label class="field" style="margin:16px 0 12px">
             <span>Sign-in code</span>
             <input type="text" id="otp" inputmode="numeric" autocomplete="one-time-code"
-                   maxlength="6" placeholder="000000" value="${esc(s.code)}"
+                   maxlength="10" value="${esc(s.code)}"
                    style="text-align:center;letter-spacing:.4em;font-size:22px;font-variant-numeric:tabular-nums">
           </label>
           ${s.error ? `<div class="sub" style="color:var(--danger);margin:-4px 0 12px">${esc(s.error)}</div>` : ''}
@@ -97,8 +98,12 @@ function renderSignIn(app) {
     const codeInput = $('#otp', app);
     codeInput.focus();
     const verify = async () => {
+      // The code's length is a Supabase project setting (6–10 digits), so
+      // don't validate it here — an assumed length just locks the app to
+      // whatever the dashboard happened to say at the time. Let the server
+      // be the judge; a wrong length comes back as an invalid token.
       const token = codeInput.value.trim();
-      if (token.length < 6) return;
+      if (!token) return;
       signInStatus = { ...s, code: token, verifying: true, error: null };
       renderSignIn(app);
       const { error } = await supabaseClient.auth.verifyOtp({ email: s.email, token, type: 'email' });

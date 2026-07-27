@@ -143,7 +143,11 @@ renderSignIn(app)`; nothing else in `app.js` runs until a session exists.
   - **Authentication → Emails → Magic Link template** must render
     `{{ .Token }}`. The code is always minted server side, but the stock
     template shows only the link — without the token in the template there's
-    no code for anyone to type, and the iOS flow above is dead.
+    no code for anyone to type, and the iOS flow above is dead. The code's
+    length is a project setting as well (6–10 digits; this project uses 8),
+    which is why `renderSignIn` validates only that the field is non-empty
+    and lets the server reject a wrong length. Don't reintroduce a length
+    check — it silently breaks the moment that setting changes.
 - **New accounts**: `loadForUser` creates an empty Supabase row on first
   sign-in, then calls `offerLegacyImport()`, which checks the *old* flat
   `iron.gymtracker.v1` key (pre-accounts local data) and offers a one-time
