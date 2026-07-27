@@ -3,7 +3,8 @@
    State lives in localStorage; everything renders from `state`.
    ============================================================ */
 
-const LS_KEY = 'iron.gymtracker.v1';
+const LS_KEY = 'iron.gymtracker.v1';          // legacy, pre-accounts key
+const lsKey = (userId) => LS_KEY + '.' + userId;
 
 const defaultState = () => ({
   programs: [],
@@ -13,27 +14,109 @@ const defaultState = () => ({
   settings: { unit: 'kg', rest: 90, sound: true },
 });
 
-let state = load();
+let state = defaultState();
 let view = { name: 'home', arg: null };
 
-function load() {
+function safeParse(raw) {
+  if (!raw) return null;
   try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (!raw) return defaultState();
-    const parsed = JSON.parse(raw, (k, v) => (k === '__proto__' ? undefined : v));
-    return Object.assign(defaultState(), parsed);
+    return JSON.parse(raw, (k, v) => (k === '__proto__' ? undefined : v));
   } catch (e) {
-    console.warn('Could not read saved data', e);
-    return defaultState();
+    return null;
   }
 }
+
+/* Loads the signed-in user's data: local cache first (instant, works
+   offline), then reconciles with their Supabase row in the background.
+   Brand-new accounts get an empty row, then a one-time offer to import any
+   pre-accounts data already sitting in this browser under the old flat key. */
+async function loadForUser(userId) {
+  const bootView = () => {
+    go(state.active ? 'session' : 'home');
+    if (state.active) setWakeLock(true);
+  };
+
+  const cached = safeParse(localStorage.getItem(lsKey(userId)));
+  if (cached) {
+    state = Object.assign(defaultState(), cached);
+    bootView();
+  }
+
+  try {
+    const { data: row, error } = await supabaseClient
+      .from('gymtracker_data')
+      .select('data')
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (error) throw error;
+
+    if (row) {
+      state = Object.assign(defaultState(), row.data);
+      localStorage.setItem(lsKey(userId), JSON.stringify(state));
+      bootView();
+    } else {
+      state = defaultState();
+      localStorage.setItem(lsKey(userId), JSON.stringify(state));
+      await supabaseClient.from('gymtracker_data').insert({ user_id: userId, data: state });
+      bootView();
+      offerLegacyImport();
+    }
+  } catch (e) {
+    console.warn('Could not reach Supabase; using local cache if available', e);
+    if (!cached) bootView();   // still show the (empty) app rather than a blank screen
+  }
+}
+
+function offerLegacyImport() {
+  const legacy = safeParse(localStorage.getItem(LS_KEY));
+  const hasData = legacy && ((legacy.programs && legacy.programs.length) || (legacy.history && legacy.history.length));
+  if (!hasData) return;
+  confirmModal(
+    'Import existing data?',
+    'This device has workout data saved from before accounts existed. Import it into your new account?',
+    () => {
+      state = Object.assign(defaultState(), legacy);
+      save();
+      render();
+    },
+    'Import'
+  );
+}
+
+let syncTimer = null;
+let syncPending = false;
+
+/* Writes to the local cache instantly (so typing never waits on a network
+   round-trip), then pushes to Supabase on a short debounce so rapid edits
+   (e.g. every keystroke in a set's weight/reps field) coalesce into one
+   request instead of one per keystroke. */
 function save() {
+  if (!session) return;   // render() gates the whole app behind sign-in
   try {
-    localStorage.setItem(LS_KEY, JSON.stringify(state));
+    localStorage.setItem(lsKey(session.user.id), JSON.stringify(state));
   } catch (e) {
-    console.warn('Could not save', e);
+    console.warn('Could not save locally', e);
+  }
+  syncPending = true;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(syncNow, 2000);
+}
+
+async function syncNow() {
+  if (!session || !syncPending) return;
+  syncPending = false;
+  try {
+    const { error } = await supabaseClient
+      .from('gymtracker_data')
+      .upsert({ user_id: session.user.id, data: state });
+    if (error) throw error;
+  } catch (e) {
+    console.warn('Sync failed, will retry once back online', e);
+    syncPending = true;
   }
 }
+
+window.addEventListener('online', () => { if (syncPending) syncNow(); });
 
 /* ---------- helpers ---------- */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -474,6 +557,24 @@ function go(name, arg) {
 function render() {
   const app = $('#app');
   const back = $('#backBtn');
+  const settingsBtn = $('#settingsBtn');
+  const tabbar = $('#tabbar');
+
+  if (!session) {
+    $('#title').textContent = 'Iron';
+    back.hidden = true;
+    settingsBtn.hidden = true;
+    tabbar.hidden = true;
+    $('#timerBar').hidden = true;
+    document.body.classList.remove('in-session');
+    document.body.classList.add('signed-out');
+    renderSignIn(app);
+    return;
+  }
+  settingsBtn.hidden = false;
+  tabbar.hidden = false;
+  document.body.classList.remove('signed-out');
+
   back.hidden = view.name === 'home' || view.name === 'history' || view.name === 'session';
 
   document.querySelectorAll('.tab').forEach((t) => {
@@ -1267,7 +1368,9 @@ function openSettings() {
           <option value="0" ${!state.settings.sound ? 'selected' : ''}>Off</option>
         </select></label>
       <button class="btn block sm" id="export" style="margin-bottom:8px">Export data (JSON)</button>
-      <button class="btn block sm danger" id="wipe">Erase all data</button>
+      <button class="btn block sm danger" id="wipe" style="margin-bottom:20px">Erase all data</button>
+      <div class="sub" style="text-align:center;margin-bottom:8px">Signed in as ${esc(session ? session.user.email : '')}</div>
+      <button class="btn block sm ghost" id="signOut">Sign out</button>
       <div class="modal-actions">
         <button class="btn primary" id="close">Done</button>
       </div>
@@ -1298,6 +1401,12 @@ function openSettings() {
       go('home');
     }, 'Erase');
   };
+  $('#signOut', back).onclick = () => {
+    confirmModal('Sign out?', 'You can sign back in any time with the same email.', () => {
+      back.remove();
+      signOut();
+    }, 'Sign out');
+  };
   $('#close', back).onclick = () => back.remove();
   back.onclick = (e) => { if (e.target === back) back.remove(); };
 }
@@ -1325,5 +1434,21 @@ setInterval(() => {
 }, 15000);
 
 timer.remaining = state.settings.rest;
-go(state.active ? 'session' : 'home');
-if (state.active) setWakeLock(true);
+
+authReady.then(() => {
+  window.onAuthChange = (hadSessionBefore) => {
+    if (session && !hadSessionBefore) {
+      loadForUser(session.user.id);
+    } else if (!session) {
+      state = defaultState();
+      render();
+    }
+    // Any other transition (e.g. a background token refresh) leaves
+    // already-loaded data alone.
+  };
+  if (session) {
+    loadForUser(session.user.id);
+  } else {
+    render();
+  }
+});

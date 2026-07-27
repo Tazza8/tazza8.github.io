@@ -34,6 +34,8 @@ body {
 body.in-session {
   padding-bottom: calc(var(--bar-h) + var(--timer-h) + var(--safe-b) + 10px);
 }
+/* No tab bar while signed out, so no need to reserve space for one. */
+body.signed-out { padding-bottom: 0; }
 
 /* ---------- top bar ---------- */
 #topbar {
@@ -136,7 +138,7 @@ button { font: inherit; }
 .btn.block { width: 100%; }
 .btn.sm { padding: 8px 12px; font-size: 14px; border-radius: 9px; }
 
-input[type="text"], input[type="number"], select {
+input[type="text"], input[type="number"], input[type="email"], select {
   background: var(--surface-2);
   border: 1px solid var(--line);
   color: var(--text);
@@ -267,6 +269,7 @@ label.field > span { display: block; font-size: 13px; color: var(--muted); margi
 .t-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 
 /* ---------- tab bar ---------- */
+#tabbar[hidden] { display: none; }
 #tabbar {
   position: fixed;
   left: 0; right: 0; bottom: 0;

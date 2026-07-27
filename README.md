@@ -1,22 +1,32 @@
 # Iron — Gym Tracker
 
-A single-page gym tracker. No build step, no dependencies, no accounts — everything
-is stored locally in the browser via `localStorage`, so it works offline.
+A gym tracker, installable on iPhone as a real app. No build step, no UI
+framework — plain HTML/CSS/JS. Sign in with just an email (no password) and
+your programs, workouts and history sync to your account, so multiple people
+can install the same app and each see only their own data.
 
-## Run it
+**Try it: https://tazza8.github.io/** — open in Safari on iPhone,
+then Share → **Add to Home Screen**.
+
+## Run it locally
 
 ```bash
 python3 -m http.server 4173
 ```
 
-Then open http://localhost:4173.
-
-To use it on your phone, run the server on your computer and visit
-`http://<your-computer-ip>:4173` on the same Wi-Fi, then **Add to Home Screen** —
-it opens full-screen like an app. (Data lives per-browser, so the phone keeps its
-own history.)
+Then open http://localhost:4173. Signing in needs a real Supabase project
+wired up in `supabase-config.js` (see that file) — without it the app still
+loads and shows the sign-in screen, but sending a magic link will fail.
 
 ## How it works
+
+**Sign in** — enter your email and get a one-time link back, no password to
+create or remember. Every person who signs in gets their own private set of
+programs, workouts and history — nothing is shared between accounts. Data is
+synced to your account in the background (a couple of seconds after each
+change), but actually **saving** a set needs a live connection; a dropped
+connection mid-workout doesn't lose anything, it just retries once you're
+back online. The app itself still opens instantly with no connection at all.
 
 **Programs** — build a training program by picking exercises from the library
 (chest press, squats, deadlifts, ~40 built in, grouped by muscle) or by creating a
@@ -57,7 +67,8 @@ are stored with the session, so the history keeps a permanent 🏅 marker.
 Unfinished sets aren't saved.
 
 Settings (⚙) cover kg/lb, rest length, alarm sound, JSON export of all your data,
-and a full erase.
+sign-out, and a full erase (which also clears your synced account data, not just
+this device).
 
 ## Files
 
@@ -66,7 +77,13 @@ and a full erase.
 | `index.html` | Page shell: top bar, timer bar, tab bar |
 | `styles.css` | All styling; dark, mobile-first |
 | `exercises.js` | Built-in exercise library (stable ids — history references them) |
-| `app.js` | State, persistence, rendering, rest timer |
+| `app.js` | State, persistence/sync, rendering, rest timer |
+| `auth.js` | Sign-in screen and session handling |
+| `supabase-config.js` | Your Supabase project's URL + public key |
+| `vendor/supabase.js` | The Supabase JS client, vendored so it works offline too |
+| `sw.js` | Service worker — caches the app so it opens with no connection |
+| `manifest.webmanifest`, `icons/` | Home-screen icon and standalone-app behavior |
+| `supabase/schema.sql` | One-time setup SQL for a new Supabase project |
 
 An in-progress workout survives a refresh or a phone lock — it's saved on every
 keystroke and restored on load. The screen is kept awake during a session where the
