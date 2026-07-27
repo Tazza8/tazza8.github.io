@@ -17,12 +17,28 @@ const defaultState = () => ({
 let state = defaultState();
 let view = { name: 'home', arg: null };
 
+const stripProtoReviver = (k, v) => (k === '__proto__' ? undefined : v);
+
 function safeParse(raw) {
   if (!raw) return null;
   try {
-    return JSON.parse(raw, (k, v) => (k === '__proto__' ? undefined : v));
+    return JSON.parse(raw, stripProtoReviver);
   } catch (e) {
     return null;
+  }
+}
+
+// Supabase's client already parses the response body itself, so a row's
+// `data` column arrives as a plain object rather than a raw string — this
+// re-parses it through the same __proto__-stripping reviver `safeParse` uses,
+// closing the same prototype-pollution gap for data read back from the
+// server, not just from localStorage.
+function stripProto(obj) {
+  if (!obj) return obj;
+  try {
+    return JSON.parse(JSON.stringify(obj), stripProtoReviver);
+  } catch (e) {
+    return obj;
   }
 }
 
@@ -51,7 +67,7 @@ async function loadForUser(userId) {
     if (error) throw error;
 
     if (row) {
-      state = Object.assign(defaultState(), row.data);
+      state = Object.assign(defaultState(), stripProto(row.data));
       localStorage.setItem(lsKey(userId), JSON.stringify(state));
       bootView();
     } else {

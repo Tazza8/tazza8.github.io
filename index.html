@@ -2,6 +2,16 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<!-- Restricts scripts/connections to same-origin + the Supabase project; keep
+     the connect-src host in sync with SUPABASE_URL in supabase-config.js if
+     that ever changes. style-src needs 'unsafe-inline' since app.js/auth.js
+     render plenty of inline style="" attributes — narrowing that would need
+     converting them all to CSS classes, out of scope here. Note this can't
+     cover clickjacking (frame-ancestors is silently ignored when delivered
+     via a meta tag, not a real HTTP header) — GitHub Pages doesn't support
+     custom response headers, so that gap stays open until this is hosted
+     somewhere that does (e.g. behind Cloudflare on a custom domain). -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://ulcwstgimeldwafueppt.supabase.co; object-src 'none'; base-uri 'self'; form-action 'self'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0d1117">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -50,10 +60,6 @@
 <script src="auth.js"></script>
 <script src="exercises.js"></script>
 <script src="app.js"></script>
-<script>
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js'));
-  }
-</script>
+<script src="register-sw.js"></script>
 </body>
 </html>
