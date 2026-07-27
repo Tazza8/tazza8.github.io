@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Iron — a gym tracker, installable on iPhone as a PWA. No build step, no
+Evolv — a gym tracker, installable on iPhone as a PWA. No build step, no
 package manager, no bundler, no UI framework — plain HTML/CSS/JS files served
 as-is. It does have one lightweight backend dependency: Supabase, used only
 for accounts (magic-link email sign-in) and syncing each user's data. There is
@@ -114,6 +114,11 @@ renderSignIn(app)`; nothing else in `app.js` runs until a session exists.
   `iron.gymtracker.v1` key (pre-accounts local data) and offers a one-time
   import via the existing `confirmModal` helper — declining just leaves an
   empty account, it never blocks rendering the app.
+- **`LS_KEY` still literally says `'iron.gymtracker.v1'`** even though the app
+  was renamed to Evolv — intentionally. It's a frozen historical key name used
+  only to detect pre-accounts local data on someone's device; renaming it
+  would just break that detection for zero user-visible benefit. Don't "fix"
+  this to match current branding.
 
 **Rendering inputs without losing focus**: set-row inputs in `renderSession` only
 write to `state` on `oninput` — they do NOT trigger a re-render. Re-rendering the
@@ -199,6 +204,15 @@ Note there's an inherent one-reload lag: a page already loaded under the old
 service worker keeps running the old cached JS even after a new worker
 finishes installing in the background — a change won't be visible until the
 *next* load after that.
+
+**Every `fetch()` in `sw.js` passes `{ cache: 'reload' }` explicitly** — both
+in `install` (populating a brand-new named cache) and in the runtime
+background-refresh path. Without this, `fetch()`/`cache.addAll()` use default
+HTTP caching semantics, meaning a stale response already sitting in the
+browser's own disk cache can get copied straight into the Cache Storage
+entry that's supposed to represent the *fresh* version — silently
+reintroducing the exact staleness this file exists to prevent. Don't drop
+this when touching `sw.js`.
 
 ## Deployment
 

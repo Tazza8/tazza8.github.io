@@ -1,4 +1,4 @@
-const CACHE_NAME = 'iron-v4';
+const CACHE_NAME = 'evolv-v2';
 const ASSETS = [
   '.',
   'index.html',
@@ -15,7 +15,17 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)));
+  // cache.addAll() doesn't bypass the browser's own HTTP cache, so a stale
+  // response sitting there could get copied straight into this brand-new
+  // named cache. { cache: 'reload' } forces each of these through the
+  // network for real.
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) =>
+      Promise.all(ASSETS.map((url) =>
+        fetch(url, { cache: 'reload' }).then((response) => cache.put(url, response))
+      ))
+    )
+  );
   self.skipWaiting();
 });
 
@@ -38,7 +48,7 @@ self.addEventListener('fetch', (event) => {
   if (new URL(event.request.url).origin !== self.location.origin) return;
   event.respondWith(
     caches.match(event.request).then((cached) => {
-      const network = fetch(event.request)
+      const network = fetch(event.request, { cache: 'reload' })
         .then((response) => {
           if (response.ok) {
             const copy = response.clone();

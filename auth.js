@@ -53,7 +53,7 @@ function renderSignIn(app) {
   app.innerHTML = `
     <div style="max-width:360px;margin:18vh auto 0;padding:0 20px;text-align:center">
       <div style="font-size:40px;margin-bottom:6px">🏋️</div>
-      <h2 style="margin:0 0 4px;font-size:20px">Iron</h2>
+      <h2 style="margin:0 0 4px;font-size:20px">Evolv</h2>
       <div class="sub" style="margin-bottom:22px">Sign in to sync your programs and history.</div>
       ${s.sent ? `
         <div class="card" style="text-align:left">

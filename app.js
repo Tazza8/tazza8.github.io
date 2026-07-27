@@ -1,5 +1,5 @@
 /* ============================================================
-   Iron — gym tracker
+   Evolv — gym tracker
    State lives in localStorage; everything renders from `state`.
    ============================================================ */
 
@@ -561,7 +561,7 @@ function render() {
   const tabbar = $('#tabbar');
 
   if (!session) {
-    $('#title').textContent = 'Iron';
+    $('#title').textContent = 'Evolv';
     back.hidden = true;
     settingsBtn.hidden = true;
     tabbar.hidden = true;
@@ -1389,7 +1389,7 @@ function openSettings() {
     const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'iron-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+    a.download = 'evolv-backup-' + new Date().toISOString().slice(0, 10) + '.json';
     a.click();
     URL.revokeObjectURL(a.href);
   };

@@ -1,4 +1,4 @@
-# Iron — Gym Tracker
+# Evolv — Gym Tracker
 
 A gym tracker, installable on iPhone as a real app. No build step, no UI
 framework — plain HTML/CSS/JS. Sign in with just an email (no password) and
