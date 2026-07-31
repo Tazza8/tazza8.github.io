@@ -17,7 +17,9 @@ const defaultState = () => ({
 });
 
 let state = defaultState();
-let view = { name: 'home', arg: null };
+// Daily is the landing view — it's the first tab and the screen you'd open the
+// app to check. An unfinished workout still wins over it (see bootView).
+let view = { name: 'daily', arg: null };
 
 const stripProtoReviver = (k, v) => (k === '__proto__' ? undefined : v);
 
@@ -50,7 +52,7 @@ function stripProto(obj) {
    pre-accounts data already sitting in this browser under the old flat key. */
 async function loadForUser(userId) {
   const bootView = () => {
-    go(state.active ? 'session' : 'home');
+    go(state.active ? 'session' : 'daily');
     if (state.active) setWakeLock(true);
   };
 
@@ -1550,9 +1552,9 @@ function ringHTML(pct, tone, big) {
     <div class="ring-wrap">
       <svg viewBox="0 0 100 100" aria-hidden="true">
         <circle class="ring-track" cx="50" cy="50" r="${RING_R}"/>
-        <circle class="ring-arc ${tone}" cx="50" cy="50" r="${RING_R}"
+        ${dash > 0 ? `<circle class="ring-arc ${tone}" cx="50" cy="50" r="${RING_R}"
                 stroke-dasharray="${dash.toFixed(1)} ${(RING_C - dash).toFixed(1)}"
-                transform="rotate(-90 50 50)"/>
+                transform="rotate(-90 50 50)"/>` : ''}
       </svg>
       <div class="ring-mid">${big}</div>
     </div>`;

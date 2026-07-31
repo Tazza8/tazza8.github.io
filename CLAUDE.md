@@ -50,7 +50,11 @@ listeners with `querySelectorAll` + `.onclick`/`.oninput`. `render()` is the rou
 it reads the global `view = { name, arg }` and dispatches to `renderHome`,
 `renderProgram`, `renderPlan`, `renderSession`, `renderDaily`, `renderHistory`,
 `renderHistoryDetail`, or `renderExercise`. Navigate with `go(name, arg)`, never
-by mutating `view` directly.
+by mutating `view` directly. **`daily` is the landing view** — `view`'s initial
+value and `bootView()`'s fallback are both `'daily'`, and it's the first tab in
+`#tabbar`, ahead of Programs. An unfinished workout still overrides it
+(`bootView` goes to `session` first if `state.active` is set); nothing else
+does.
 
 **Persistence**: `state` is still one JSON blob with the same shape it always
 had — accounts were added by changing *where* that blob is persisted, not its
