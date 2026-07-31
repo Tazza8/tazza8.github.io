@@ -22,6 +22,12 @@
   --on-accent: #03121c;       /* text sitting on top of the brand ramp */
   --good: var(--brand-1);
   --danger: #ff5f56;
+  /* The one colour outside the logo ramp. Recovery is a traffic light —
+     green / amber / red — and that banding is the most recognisable thing
+     about this screen. Without an amber the middle band had to borrow the
+     cyan that strain already uses, which made the two dials indistinguishable
+     and destroyed the signal. Used for nothing else. */
+  --warn: #f5b544;
   --danger-line: #4a2320;
   --radius: 12px;
   --bar-h: 56px;
@@ -328,43 +334,86 @@ label.field > span {
   stroke-linecap: round;
   transition: stroke-dasharray .35s ease;
 }
-.ring-arc.tone-high { stroke: var(--brand-1); }
-.ring-arc.tone-mid  { stroke: var(--brand-2); }
-.ring-arc.tone-low  { stroke: var(--danger); }
-.ring-arc.tone-thin { stroke: var(--line); }
+/* Recovery uses the value-encoded tones; strain and sleep each keep one fixed
+   colour so the three dials stay tellable apart at a glance, the way Whoop's
+   blue strain and blue-violet sleep do. */
+.ring-arc.tone-high   { stroke: var(--brand-1); }
+.ring-arc.tone-mid    { stroke: var(--warn); }
+.ring-arc.tone-low    { stroke: var(--danger); }
+.ring-arc.tone-thin   { stroke: var(--line); }
+.ring-arc.tone-strain { stroke: var(--brand-2); }
+.ring-arc.tone-sleep  { stroke: var(--brand-3); }
 .ring-mid {
   position: absolute;
   inset: 0;
   display: grid;
   place-items: center;
-  font-size: 25px;
+  font-size: 20px;
   font-weight: 700;
   line-height: 1;
   font-variant-numeric: tabular-nums;
 }
 
-.hero { display: flex; align-items: center; gap: 16px; }
-.hero .ring-wrap { width: 104px; height: 104px; }
-.hero .ring-mid { font-size: 30px; }
-.hero-word {
-  font-size: 19px;
-  font-weight: 700;
-  letter-spacing: .04em;
-  text-transform: uppercase;
-  margin-top: 3px;
-}
-.advice { padding: 12px 14px; font-size: 14px; color: var(--text-dim); }
-
-/* Two half-width metric cards side by side. */
-.duo { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.duo .mini {
+/* ---- the Recovery / Strain / Sleep header ---- */
+.triad {
   display: grid;
-  justify-items: center;
-  text-align: center;
-  padding: 14px 10px;
-  margin-bottom: 10px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  padding: 18px 10px 16px;
 }
-.duo .mini .badge { margin-top: 10px; }
+.dial { display: grid; justify-items: center; gap: 9px; }
+.dial .ring-wrap { width: 84px; height: 84px; }
+
+/* ---- one detail card per metric ---- */
+.metric { padding: 14px; }
+.metric-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.metric-value {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.metric-value.text-high   { color: var(--brand-1); }
+.metric-value.text-mid    { color: var(--warn); }
+.metric-value.text-low    { color: var(--danger); }
+.metric-value.text-strain { color: var(--brand-2); }
+.metric-value.text-sleep  { color: var(--brand-3); }
+.metric-line { font-size: 14px; color: var(--text-dim); margin-bottom: 8px; }
+
+.bar {
+  position: relative;
+  height: 8px;
+  border-radius: 5px;
+  background: var(--surface-2);
+  overflow: hidden;
+  margin: 4px 0 8px;
+}
+.bar-fill { height: 100%; border-radius: 5px; }
+.bar-fill.tone-strain { background: var(--brand-2); }
+.bar-fill.tone-sleep  { background: var(--brand-3); }
+/* The recovery-derived strain target, marked on the strain bar itself. */
+.bar-target {
+  position: absolute;
+  top: 0; bottom: 0;
+  background: rgba(255, 255, 255, .16);
+  border-left: 1px solid var(--text-dim);
+  border-right: 1px solid var(--text-dim);
+}
+
+.target-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--line);
+  margin-top: 11px;
+  padding-top: 11px;
+}
+.target-range { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
 
 .disclaimer { font-size: 11px; opacity: .75; margin: 2px 2px 4px; }
 
@@ -392,7 +441,7 @@ label.field > span {
 }
 .strip-fill { width: 100%; border-radius: 7px; }
 .strip-fill.tone-high { background: var(--brand-1); }
-.strip-fill.tone-mid  { background: var(--brand-2); }
+.strip-fill.tone-mid  { background: var(--warn); }
 .strip-fill.tone-low  { background: var(--danger); }
 .strip-num {
   font-size: 11px;

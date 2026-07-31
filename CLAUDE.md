@@ -205,14 +205,29 @@ Garmin all have OAuth REST APIs), which needs a server to hold the client
 secret — a Supabase Edge Function would do it, and would be the first
 server-side code in the project.
 
-`renderDaily` is laid out as an at-a-glance overview: a readiness ring, a
-training suggestion, sleep-performance and training-load rings, then a tappable
-seven-day strip, with the check-in form and trend charts below. The rings'
-arcs take a **flat** palette colour, not the brand gradient, because here the
-colour is the signal — `toneFor()` maps the score to `--brand-1` / `--brand-2` /
-`--danger`, and a poor score must not render in the same cheerful teal as a
-good one. `loadTone()` inverts that logic deliberately: a load ratio well above
-your norm is a spike, so it goes red rather than green.
+`renderDaily` deliberately mirrors Whoop's home screen: the **Recovery /
+Strain / Sleep** triad of dials, then one detail card per metric, then a
+tappable seven-day strip, with the check-in form and trend charts below.
+"Recovery" is `readiness()` under its Whoop-facing name — the internal
+function keeps the old name, only the label changed.
+
+- **Recovery banding matches Whoop's thresholds**: green from 67, red below
+  34 (`toneFor`). The thresholds matter more than the exact hues.
+- **`--warn` is the one colour outside the logo ramp**, and exists solely for
+  the middle recovery band. Recovery is a traffic light and the palette has no
+  amber; without it the mid band had to borrow the cyan that strain already
+  uses, which made two of the three dials indistinguishable. Don't reuse it
+  for anything else, and don't "tidy" it back into the ramp.
+- Strain keeps `--brand-2` and sleep `--brand-3`, fixed rather than
+  value-encoded, so the three dials stay tellable apart at a glance.
+- **`strainForDay()` is a 0–21 scale like Whoop's**, but computed from
+  training volume rather than heart rate, which this app can't see. It's
+  scaled against `strainRef()` — roughly the 90th-percentile day of the last
+  90 days — because strain in absolute kilos is meaningless; it only means
+  something relative to what *you* usually do. A day at the reference lands
+  near 18.7.
+- `strainTarget()` derives the day's target range from recovery, and the
+  strain bar marks that range so overshooting is visible.
 
 The whole overview plus the strip live inside `#overview`, which is replaced
 wholesale on every edit so the rings track what you type. The strip's day
@@ -342,6 +357,8 @@ no build step to add one, so regenerating them is a manual job.
 
 All colors are CSS custom properties on `:root` in `styles.css` (`--bg`,
 `--accent`, `--good`, `--danger`, etc.) — never hardcode a hex color in CSS,
+and note `--warn` is deliberately outside the brand ramp for the reason given
+under **Daily check-in**,
 and never in `app.js`/`auth.js` either. Inline SVG isn't an exception: both the
 mark and the chart put classes on their `<stop>` elements and let `styles.css`
 set `stop-color` (see `.evolv-mark` and `.chart-grad`), which works where a

@@ -525,12 +525,11 @@ function readiness(day, ts) {
   return { score, parts, worst, ratio, selfReported };
 }
 
-const readinessWord = (score) =>
-  score >= 80 ? 'Primed' : score >= 65 ? 'Good' : score >= 45 ? 'Moderate' : 'Low';
-
-/* Chartable daily metrics, same shape as METRICS. */
+/* Chartable daily metrics, same shape as METRICS. The `readiness` key keeps
+   its internal name; "Recovery" is what it's called on screen. */
 const DAILY_METRICS = {
-  readiness:  { label: 'Readiness', suffix: () => '',           get: (p) => p.value },
+  readiness:  { label: 'Recovery',  suffix: () => '%',          get: (p) => p.value },
+  strain:     { label: 'Strain',    suffix: () => '',           get: (p) => p.value },
   sleep:      { label: 'Sleep',     suffix: () => ' h',         get: (p) => p.value },
   energy:     { label: 'Energy',    suffix: () => ' / 5',       get: (p) => p.value },
   weight:     { label: 'Weight',    suffix: () => ' ' + unit(), get: (p) => p.value },
@@ -547,6 +546,10 @@ function dailySeries(key) {
       if (key === 'readiness') {
         const r = readiness(d, ts);
         return r ? { date: ts, value: r.score } : null;
+      }
+      if (key === 'strain') {
+        const s = strainForDay(d.date);
+        return s.value ? { date: ts, value: +s.value.toFixed(1) } : null;
       }
       return hasVal(d[key]) && num(d[key]) > 0 ? { date: ts, value: num(d[key]) } : null;
     })
@@ -1505,63 +1508,136 @@ function ringHTML(pct, tone, big) {
     </div>`;
 }
 
-const toneFor = (score) => (score >= 65 ? 'tone-high' : score >= 45 ? 'tone-mid' : 'tone-low');
+/* Whoop's recovery bands: green from 67, red below 34. Matching the
+   thresholds matters more than matching the hues — we only have the Evolv
+   ramp to work with, so mint stands in for green and --danger for red. */
+const toneFor = (pct) => (pct >= 67 ? 'tone-high' : pct >= 34 ? 'tone-mid' : 'tone-low');
 
-/* Load sits best around your recent norm. Well above it is a spike worth
-   noticing, so it reads as a warning rather than an achievement. */
-const loadTone = (ratio) => (ratio > 1.5 ? 'tone-low' : ratio >= 0.8 && ratio <= 1.3 ? 'tone-high' : 'tone-mid');
+const recoveryPhrase = (pct) =>
+  pct >= 67 ? 'Well recovered — your body is ready for it.'
+  : pct >= 34 ? 'Moderately recovered. Hold steady rather than adding.'
+  : 'Poorly recovered. A light session or rest is the sensible call.';
 
-/* A suggestion, not a prescription — the input is self-report. */
-const readinessAdvice = (score) =>
-  score >= 80 ? 'Good day to push. Chase a top set.'
-  : score >= 65 ? 'Train as planned.'
-  : score >= 45 ? 'Hold volume steady rather than adding to it.'
-  : 'A lighter session or a rest day is the sensible call.';
+/* Recovery sets the ceiling on the day's strain, the way Whoop's does. The
+   numbers are on the same 0–21 scale as strainForDay(). */
+const strainTarget = (pct) => (pct >= 67 ? [14, 18] : pct >= 34 ? [10, 14] : [6, 10]);
 
+/* Total weight moved on a given calendar day. */
+function volumeOnDay(key) {
+  return state.history.reduce((t, s) =>
+    (dateKey(s.finishedAt || s.startedAt) === key ? t + volume(s) : t), 0);
+}
+
+/* The volume a hard day looks like *for this user* — roughly the 90th
+   percentile of the last 90 days of training. Strain is meaningless in
+   absolute kilos, so it's always scaled against your own recent history. */
+function strainRef() {
+  const cutoff = Date.now() - 90 * 86400000;
+  const byDay = {};
+  state.history.forEach((s) => {
+    const t = s.finishedAt || s.startedAt;
+    if (t < cutoff) return;
+    const k = dateKey(t);
+    byDay[k] = (byDay[k] || 0) + volume(s);
+  });
+  const vals = Object.values(byDay).filter(Boolean).sort((a, b) => b - a);
+  return vals.length ? vals[Math.floor(vals.length * 0.1)] : 0;
+}
+
+/* Whoop's strain is a 0–21 logarithmic scale off heart rate, which this app
+   can't see. This is the same scale and the same shape of curve, computed
+   from training volume instead — for lifting that's arguably the better
+   input, since it knows what you actually moved. A day at your reference
+   volume lands around 18.7; half of it around 14. */
+function strainForDay(key) {
+  const vol = volumeOnDay(key);
+  const ref = strainRef();
+  if (!vol || !ref) return { value: 0, volume: vol };
+  return { value: Math.min(21, 21 * (1 - Math.exp((-2.2 * vol) / ref))), volume: vol };
+}
+
+const fmtHM = (hours) => `${Math.floor(hours)}h ${String(Math.round((hours % 1) * 60)).padStart(2, '0')}m`;
+
+/* Whoop's home screen: the Recovery / Strain / Sleep triad up top, then one
+   detail card per metric. "Recovery" is this app's `readiness()` under its
+   Whoop-facing name — the computation is self-reported and the disclaimer at
+   the foot of the screen says so. */
 function overviewHTML(day, ts) {
+  const key = day.date;
   const r = readiness(day, ts);
-  if (!r) {
-    return `<div class="card">
-      <div class="title">No check-in yet</div>
-      <div class="sub">Answer anything below and your readiness appears here.</div>
-    </div>`;
-  }
-  // Under three answers there isn't enough to call it: the ring goes neutral
-  // and the verdict word is withheld.
-  const thin = r.selfReported < 3;
+  // Under three answers there isn't enough to call it: the dial goes neutral
+  // and no verdict is offered.
+  const thin = !r || r.selfReported < 3;
+  const rec = r ? r.score : null;
+
   const hours = num(day.sleep);
   const sleepPct = hours > 0 ? Math.round((hours / SLEEP_TARGET) * 100) : null;
+  const strain = strainForDay(key);
+  const target = rec == null ? null : strainTarget(rec);
+
+  const dial = (value, pct, tone, label) => `
+    <div class="dial">
+      ${ringHTML(pct, tone, value)}
+      <div class="badge">${label}</div>
+    </div>`;
 
   return `
-    <div class="card hero">
-      ${ringHTML(r.score, thin ? 'tone-thin' : toneFor(r.score), r.score)}
-      <div class="grow">
-        <div class="badge">Readiness</div>
-        <div class="hero-word">${thin ? 'Partial' : readinessWord(r.score)}</div>
-        <div class="sub" style="margin:2px 0 0">${thin
-          ? `Based on ${r.selfReported} of 5 answers`
-          : `Biggest drag: ${esc(r.worst.label)}`}</div>
-      </div>
+    <div class="card triad">
+      ${dial(thin || rec == null ? '—' : rec + '%', rec == null ? 0 : rec,
+             thin ? 'tone-thin' : toneFor(rec), 'Recovery')}
+      ${dial(strain.value ? fmtN(strain.value) : '—', (strain.value / 21) * 100,
+             strain.value ? 'tone-strain' : 'tone-thin', 'Strain')}
+      ${dial(sleepPct == null ? '—' : sleepPct + '%', sleepPct == null ? 0 : Math.min(100, sleepPct),
+             sleepPct == null ? 'tone-thin' : 'tone-sleep', 'Sleep')}
     </div>
-    ${thin ? '' : `<div class="card advice">${esc(readinessAdvice(r.score))}</div>`}
-    <div class="duo">
-      <div class="card mini">
-        ${sleepPct == null
-          ? ringHTML(0, 'tone-thin', '—')
-          : ringHTML(Math.min(100, sleepPct), toneFor(Math.min(100, sleepPct)), sleepPct + '%')}
-        <div class="badge">Sleep</div>
-        <div class="sub" style="margin:2px 0 0">${hours > 0 ? `${fmtN(hours)} of ${SLEEP_TARGET}h` : 'not logged'}</div>
+
+    <div class="card metric">
+      <div class="metric-head">
+        <span class="badge">Recovery</span>
+        <span class="metric-value ${thin || rec == null ? '' : toneFor(rec).replace('tone-', 'text-')}">${
+          rec == null ? '—' : rec + '%'}</span>
       </div>
-      <div class="card mini">
-        ${r.ratio == null
-          ? ringHTML(0, 'tone-thin', '—')
-          : ringHTML(Math.min(100, (r.ratio / 1.5) * 100), loadTone(r.ratio), Math.round(r.ratio * 100) + '%')}
-        <div class="badge">Load</div>
-        <div class="sub" style="margin:2px 0 0">${r.ratio == null ? 'needs history' : 'of your norm'}</div>
-      </div>
+      ${rec == null
+        ? `<div class="sub">Answer anything below and your recovery appears here.</div>`
+        : thin
+          ? `<div class="sub">Based on ${r.selfReported} of 5 answers — fill in more for a real read.</div>`
+          : `<div class="metric-line">${esc(recoveryPhrase(rec))}</div>
+             <div class="sub">Biggest drag: ${esc(r.worst.label)}</div>
+             <div class="target-row">
+               <span class="badge">Strain target</span>
+               <span class="target-range">${fmtN(target[0])} – ${fmtN(target[1])}</span>
+             </div>`}
     </div>
-    <div class="sub disclaimer">Self-reported — how you say you feel, plus your recent
-      training load. Not a physiological measurement.</div>`;
+
+    <div class="card metric">
+      <div class="metric-head">
+        <span class="badge">Sleep</span>
+        <span class="metric-value ${sleepPct == null ? '' : 'text-sleep'}">${sleepPct == null ? '—' : sleepPct + '%'}</span>
+      </div>
+      ${hours > 0
+        ? `<div class="metric-line">${fmtHM(hours)} of ${fmtHM(SLEEP_TARGET)}</div>
+           <div class="bar"><div class="bar-fill tone-sleep" style="width:${Math.min(100, sleepPct)}%"></div></div>`
+        : `<div class="sub">Not logged yet.</div>`}
+    </div>
+
+    <div class="card metric">
+      <div class="metric-head">
+        <span class="badge">Strain</span>
+        <span class="metric-value ${strain.value ? 'text-strain' : ''}">${strain.value ? fmtN(strain.value) : '—'}</span>
+      </div>
+      ${strain.value
+        ? `<div class="metric-line">${Math.round(strain.volume).toLocaleString()} ${unit()} moved</div>
+           <div class="bar">
+             <div class="bar-fill tone-strain" style="width:${(strain.value / 21) * 100}%"></div>
+             ${target ? `<div class="bar-target" style="left:${(target[0] / 21) * 100}%;width:${((target[1] - target[0]) / 21) * 100}%"></div>` : ''}
+           </div>
+           <div class="sub">on a 0–21 scale${target ? ` · today's target ${fmtN(target[0])}–${fmtN(target[1])}` : ''}</div>`
+        : `<div class="sub">${strainRef() ? 'No training logged today.' : 'Log a few workouts and strain starts scaling to your own history.'}</div>`}
+    </div>
+
+    <div class="sub disclaimer">Recovery is self-reported — how you say you feel, not a
+      physiological measurement. Strain is computed from the weight you moved, scaled to
+      your own last 90 days.</div>`;
 }
 
 /* The last seven days at a glance; each bar jumps to that day. */
