@@ -48,8 +48,9 @@ mutate `state`, call `save()`, call the relevant `render*` function to
 re-stringify the affected part of the DOM via `innerHTML`, then reattach event
 listeners with `querySelectorAll` + `.onclick`/`.oninput`. `render()` is the router:
 it reads the global `view = { name, arg }` and dispatches to `renderHome`,
-`renderProgram`, `renderSession`, `renderHistory`, `renderHistoryDetail`, or
-`renderExercise`. Navigate with `go(name, arg)`, never by mutating `view` directly.
+`renderProgram`, `renderPlan`, `renderSession`, `renderDaily`, `renderHistory`,
+`renderHistoryDetail`, or `renderExercise`. Navigate with `go(name, arg)`, never
+by mutating `view` directly.
 
 **Persistence**: `state` is still one JSON blob with the same shape it always
 had — accounts were added by changing *where* that blob is persisted, not its
@@ -64,6 +65,8 @@ defines the shape:
   whatever a program actually prescribes. Programs written before targets
   existed simply have no `reps` key; every read goes through `item.reps || ''`.
 - `plans` — multi-week schedules built out of programs; see **Plans** below.
+- `daily` — one self-reported check-in per calendar day, **newest first** like
+  `history`; see **Daily check-in** below.
 - `customExercises` — user-added exercises, merged with `EXERCISE_LIBRARY` (from
   `exercises.js`) via `allExercises()`. Exercise ids are stable and referenced from
   history, so never reuse/repurpose an id.
@@ -184,6 +187,34 @@ programs, not a replacement: `{ id, name, weeks, rotation: [programId…], progr
   reset or deleted. `finishSession` advances `progress` with `Math.max`, never
   assignment — replaying an earlier week must not undo later progress.
 
+**Daily check-in** (`app.js`, the section above "Drag to reorder", plus
+`renderDaily`) is sleep, energy, soreness, stress, resting HR and bodyweight,
+all typed in by hand, keyed by local calendar date via `dateKey()` — not
+`toISOString()`, which would file a late-evening check-in under the next day
+for anyone west of UTC.
+
+**There is no path to reading this automatically, and it isn't a matter of
+effort.** On iOS a web app gets no HealthKit access (there is no web API at
+all), no Web Bluetooth (Apple declined it in 2020 along with WebUSB and the
+sensor APIs), and no background execution (no Background Sync, Periodic
+Background Sync or Background Fetch). Passive 24/7 measurement of the sort a
+Whoop or Oura does is therefore impossible from this codebase; it would need a
+native app. Don't accept a task premised on adding it here. The one route that
+*could* work is pulling from a wearable vendor's cloud API (Whoop, Oura and
+Garmin all have OAuth REST APIs), which needs a server to hold the client
+secret — a Supabase Edge Function would do it, and would be the first
+server-side code in the project.
+
+`readiness(day, ts)` is consequently a **subjective** score and is labelled as
+one in the UI — never present it as a physiological measurement. It's a
+weighted mean over only the components actually filled in (so a partial
+check-in still scores, leaning on what's there), plus one objective input:
+`loadRatio()`, the acute:chronic workload ratio of the last 3 days of training
+volume against the 28-day norm. Because training load arrives free, it's
+excluded from the `selfReported` count that decides whether the card shows a
+verdict word or just "Partial" — otherwise a check-in with one answer would
+flatter itself to "Primed".
+
 **Rep targets flow one way**: `startSession` copies each program exercise's
 `reps` onto the session entry as `target`. Editing the program afterwards must
 not rewrite what a logged workout told you to do, which is why it's copied
@@ -240,7 +271,9 @@ client (see below). Its line and area fill are painted with `<linearGradient>`s
 (`brandLine`, `brandFade`) whose stops get their colours from `styles.css` —
 see **Brand** below. Those ids are fixed rather than generated because only one
 chart is ever on screen at a time; if two charts ever coexist, they'd collide.
-`chartMetric` and `chartSel` are module-level state for the
+It takes a **getter function**, not a `METRICS` key, so the exercise charts and
+the daily-trend charts can share it despite having unrelated point shapes — a
+point only has to carry a `date`. `chartMetric` and `chartSel` are module-level state for the
 currently-viewed exercise's chart (which metric, which point is tapped);
 they're intentionally not part of `state`/`localStorage` since they're
 transient UI state, not data.

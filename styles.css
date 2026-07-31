@@ -216,7 +216,7 @@ button { font: inherit; }
 .btn.block { width: 100%; }
 .btn.sm { padding: 8px 12px; font-size: 14px; border-radius: 9px; }
 
-input[type="text"], input[type="number"], input[type="email"], select {
+input[type="text"], input[type="number"], input[type="email"], select, textarea {
   background: var(--surface-2);
   border: 1px solid var(--line);
   color: var(--text);
@@ -225,7 +225,8 @@ input[type="text"], input[type="number"], input[type="email"], select {
   font-size: 16px;
   width: 100%;
 }
-input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+textarea { resize: vertical; font-family: inherit; }
 label.field { display: block; margin-bottom: 14px; }
 label.field > span {
   display: block;
@@ -307,6 +308,47 @@ label.field > span {
 .day-pill.done { background: var(--accent-dim); border-color: transparent; color: var(--accent-soft); }
 /* The one you're up to — the only filled pill, so it reads at a glance. */
 .day-pill.now { background: var(--brand); border-color: transparent; color: var(--on-accent); }
+
+/* ---------- daily check-in ---------- */
+.day-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+}
+.readiness { display: flex; align-items: center; gap: 14px; }
+.readiness-score {
+  font-size: 46px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.readiness-score.thin { color: var(--muted); }
+.readiness-word {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+}
+.rate-ends {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.rate-row { display: flex; gap: 6px; }
+.rate-pill {
+  flex: 1;
+  height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.rate-pill.on { background: var(--brand); border-color: transparent; color: var(--on-accent); }
 
 /* ---------- session ---------- */
 .ex-card { padding: 0; overflow: hidden; }
@@ -576,6 +618,14 @@ input.target-input {
   cursor: pointer;
 }
 .seg button.on { background: var(--brand); color: var(--on-accent); }
+/* More options than fit the width: scroll them inside the control rather than
+   letting the row push the whole page sideways. */
+.seg.scroll {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.seg.scroll::-webkit-scrollbar { display: none; }
+.seg.scroll button { flex: 0 0 auto; padding-left: 12px; padding-right: 12px; }
 
 /* ---------- stats / records ---------- */
 .stat-grid {

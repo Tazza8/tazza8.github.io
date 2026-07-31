@@ -11,6 +11,7 @@ const defaultState = () => ({
   plans: [],            // multi-week schedules built out of programs
   customExercises: [],
   history: [],          // finished sessions, newest first
+  daily: [],            // one check-in per day, newest first
   active: null,         // in-progress session
   settings: { unit: 'kg', rest: 90, sound: true },
 });
@@ -420,6 +421,139 @@ document.addEventListener('visibilitychange', () => {
 });
 
 /* ============================================================
+   Daily check-in & readiness
+
+   Everything here is self-reported. The app has no sensors and can't get
+   any: iOS gives a web app no HealthKit access, no Web Bluetooth and no
+   background execution, so passive measurement of the kind a Whoop strap
+   does is off the table entirely — see the note in CLAUDE.md before
+   promising otherwise. What this *can* do that a strap can't is line those
+   numbers up against the training that caused them.
+
+   Readiness is therefore a subjective score, and is labelled as one in the
+   UI. It must never be presented as a physiological measurement.
+   ============================================================ */
+const SLEEP_TARGET = 8;      // hours; the denominator for the sleep component
+
+/* Local calendar day, not UTC — a 11pm check-in belongs to that evening's
+   date, which toISOString() would get wrong for anyone west of UTC. */
+function dateKey(ts = Date.now()) {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/* 1–5 scales. `better` says which end is good, so scoring can invert the two
+   where a high number is a bad thing. */
+const RATINGS = {
+  energy:       { label: 'Energy',        low: 'Drained',   high: 'Firing',   better: 'high' },
+  sleepQuality: { label: 'Sleep quality', low: 'Broken',    high: 'Deep',     better: 'high' },
+  soreness:     { label: 'Soreness',      low: 'Fresh',     high: 'Wrecked',  better: 'low' },
+  stress:       { label: 'Stress',        low: 'Calm',      high: 'Frazzled', better: 'low' },
+};
+
+const hasVal = (v) => v !== undefined && v !== null && v !== '';
+const ratingScore = (r, better) => (better === 'high' ? (r - 1) : (5 - r)) / 4 * 100;
+
+function dailyFor(key) {
+  return state.daily.find((d) => d.date === key) || null;
+}
+/* Days are kept newest-first like history, so an inserted day is spliced into
+   place rather than appended. */
+function dailyUpsert(key) {
+  let day = dailyFor(key);
+  if (!day) {
+    day = { date: key };
+    const at = state.daily.findIndex((d) => d.date < key);
+    state.daily.splice(at === -1 ? state.daily.length : at, 0, day);
+  }
+  return day;
+}
+
+/* Acute:chronic workload ratio — the last 3 days of training volume against
+   what 3 days usually looks like over the past 28. Around 1 means you're
+   training at your normal load; well above it means a spike, which is the
+   only objective input readiness has. Null when there's too little history
+   for the comparison to say anything. */
+function loadRatio(ts = Date.now()) {
+  const DAY = 86400000;
+  const volumeWithin = (days) => state.history.reduce((sum, s) => {
+    const t = s.finishedAt || s.startedAt;
+    return t <= ts && t > ts - days * DAY ? sum + volume(s) : sum;
+  }, 0);
+  const chronic = volumeWithin(28) / 28 * 3;
+  if (!chronic) return null;
+  return volumeWithin(3) / chronic;
+}
+
+/* Weighted mean of whatever the user actually filled in — a check-in with
+   only sleep and energy still scores, it just leans on those two. Returns
+   null when nothing scorable is present, so the UI can prompt instead of
+   showing a meaningless zero. */
+function readiness(day, ts) {
+  if (!day) return null;
+  const parts = [];
+
+  const hours = num(day.sleep);
+  if (hasVal(day.sleep) && hours > 0) {
+    parts.push({ key: 'sleep', weight: 0.25, score: Math.min(1, hours / SLEEP_TARGET) * 100, label: `${fmtN(hours)}h sleep` });
+  }
+  Object.entries(RATINGS).forEach(([key, meta]) => {
+    if (!hasVal(day[key])) return;
+    const weight = key === 'energy' ? 0.25 : key === 'stress' ? 0.10 : 0.15;
+    parts.push({ key, weight, score: ratingScore(num(day[key]), meta.better), label: meta.label.toLowerCase() });
+  });
+
+  const ratio = loadRatio(ts == null ? Date.now() : ts);
+  if (ratio != null) {
+    parts.push({
+      key: 'load',
+      weight: 0.10,
+      score: Math.max(0, Math.min(100, 100 - Math.max(0, ratio - 1) * 60)),
+      label: 'training load',
+    });
+  }
+
+  if (!parts.length) return null;
+  const total = parts.reduce((t, p) => t + p.weight, 0);
+  const score = Math.round(parts.reduce((t, p) => t + p.score * p.weight, 0) / total);
+  // Whatever scored worst is what the user can most usefully act on.
+  const worst = parts.reduce((w, p) => (p.score < w.score ? p : w), parts[0]);
+  // How many of the five self-reported fields backed this up. Training load
+  // doesn't count — it arrives free and would flatter a near-empty check-in.
+  // One field answered is not a readiness verdict, and the card says so.
+  const selfReported = parts.filter((p) => p.key !== 'load').length;
+  return { score, parts, worst, ratio, selfReported };
+}
+
+const readinessWord = (score) =>
+  score >= 80 ? 'Primed' : score >= 65 ? 'Good' : score >= 45 ? 'Moderate' : 'Low';
+
+/* Chartable daily metrics, same shape as METRICS. */
+const DAILY_METRICS = {
+  readiness:  { label: 'Readiness', suffix: () => '',           get: (p) => p.value },
+  sleep:      { label: 'Sleep',     suffix: () => ' h',         get: (p) => p.value },
+  energy:     { label: 'Energy',    suffix: () => ' / 5',       get: (p) => p.value },
+  weight:     { label: 'Weight',    suffix: () => ' ' + unit(), get: (p) => p.value },
+  restingHR:  { label: 'Rest HR',   suffix: () => ' bpm',       get: (p) => p.value },
+};
+
+/* Oldest first, skipping days where that metric wasn't filled in — the chart
+   plots what was recorded rather than inventing zeroes for blank days. */
+function dailySeries(key) {
+  return [...state.daily]
+    .reverse()
+    .map((d) => {
+      const ts = new Date(d.date + 'T12:00:00').getTime();
+      if (key === 'readiness') {
+        const r = readiness(d, ts);
+        return r ? { date: ts, value: r.score } : null;
+      }
+      return hasVal(d[key]) && num(d[key]) > 0 ? { date: ts, value: num(d[key]) } : null;
+    })
+    .filter(Boolean);
+}
+
+/* ============================================================
    Drag to reorder
    Cards are dragged by their grip; the rest of the card still scrolls.
    Positions are tracked in page coordinates so mid-drag scrolling is safe.
@@ -536,9 +670,11 @@ function openExercise(exerciseId, from) {
   go('exercise', exerciseId);
 }
 
-function chartSVG(series, metric, sel) {
+/* Takes a getter rather than a METRICS key so both the exercise charts and the
+   daily-trend charts can use it; they have entirely different point shapes but
+   the same needs. Points only have to carry a `date`. */
+function chartSVG(series, get, sel, label) {
   const W = 320, H = 148, padL = 36, padR = 10, padT = 12, padB = 20;
-  const get = METRICS[metric].get;
   const vals = series.map(get);
   const max = Math.max(...vals), min = Math.min(...vals);
   const span = max - min || Math.max(max * 0.12, 1);
@@ -554,7 +690,7 @@ function chartSVG(series, metric, sel) {
   const colW = (W - padL - padR) / Math.max(1, series.length - 1);
 
   return `
-  <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${METRICS[metric].label} over time">
+  <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)} over time">
     <defs>
       <!-- The line runs the brand ramp left-to-right across the plot; the fill
            under it is the same ramp fading out downward. Stop colours come
@@ -628,7 +764,8 @@ function render() {
   tabbar.hidden = false;
   document.body.classList.remove('signed-out');
 
-  back.hidden = view.name === 'home' || view.name === 'history' || view.name === 'session';
+  back.hidden = view.name === 'home' || view.name === 'history'
+    || view.name === 'session' || view.name === 'daily';
   brand.hidden = !back.hidden;
   if (!brand.innerHTML) brand.innerHTML = evolvMark(21);
 
@@ -649,6 +786,7 @@ function render() {
     case 'program': return renderProgram(app, view.arg);
     case 'plan': return renderPlan(app, view.arg);
     case 'session': return renderSession(app);
+    case 'daily': return renderDaily(app);
     case 'history': return renderHistory(app);
     case 'historyDetail': return renderHistoryDetail(app, view.arg);
     case 'exercise': return renderExercise(app, view.arg);
@@ -1341,6 +1479,166 @@ function finishSession() {
 }
 
 /* ============================================================
+   Daily view
+   ============================================================ */
+let dailyMetric = 'readiness';
+let dailyOffset = 0;      // 0 = today, 1 = yesterday, … (never negative)
+
+function readinessCardHTML(day, ts) {
+  const r = readiness(day, ts);
+  if (!r) {
+    return `<div class="title">No check-in yet</div>
+      <div class="sub">Fill anything in below and a readiness score appears here.</div>`;
+  }
+  const load = r.ratio == null ? '' :
+    r.ratio > 1.3 ? ' · training load is up on your usual'
+    : r.ratio < 0.7 ? ' · training load is down on your usual' : '';
+  // Under three answers there isn't enough to call it, so the number is shown
+  // plainly rather than in brand colours and the verdict word is withheld.
+  const thin = r.selfReported < 3;
+  return `
+    <div class="readiness">
+      <div class="readiness-score ${thin ? 'thin' : 'grad-text'}">${r.score}</div>
+      <div>
+        <div class="readiness-word">${thin ? 'Partial' : readinessWord(r.score)}</div>
+        <div class="sub" style="margin:0">${thin
+          ? `Based on ${r.selfReported} of 5 answers — fill in more for a real read`
+          : `Biggest drag: ${esc(r.worst.label)}${load}`}</div>
+      </div>
+    </div>
+    <div class="sub" style="margin-top:10px;font-size:11px;opacity:.8">
+      Self-reported — this is how you say you feel plus your recent training load,
+      not a physiological measurement.</div>`;
+}
+
+function renderDaily(app) {
+  $('#title').textContent = 'Daily';
+
+  const key = dateKey(Date.now() - dailyOffset * 86400000);
+  const ts = new Date(key + 'T12:00:00').getTime();
+  const day = dailyFor(key) || { date: key };
+  const logged = state.daily.filter((d) => readiness(d, new Date(d.date + 'T12:00:00').getTime()));
+
+  const dayName = dailyOffset === 0 ? 'Today'
+    : dailyOffset === 1 ? 'Yesterday'
+    : new Date(ts).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+
+  const numberField = (field, label, placeholder, step) => `
+    <label class="row between" style="margin-bottom:12px">
+      <span class="badge">${label}</span>
+      <input class="target-input" type="number" inputmode="decimal" step="${step}" min="0"
+             data-num="${field}" value="${esc(day[field] == null ? '' : day[field])}"
+             placeholder="${placeholder}" aria-label="${label}">
+    </label>`;
+
+  const series = dailySeries(dailyMetric);
+  const dm = DAILY_METRICS[dailyMetric];
+
+  app.innerHTML = `
+    <div class="row between" style="margin-bottom:12px">
+      <button class="btn sm" id="dayBack" aria-label="Previous day">‹</button>
+      <div class="day-title">${esc(dayName)}</div>
+      <button class="btn sm" id="dayFwd" aria-label="Next day" ${dailyOffset === 0 ? 'disabled style="opacity:.35"' : ''}>›</button>
+    </div>
+
+    <div class="card" id="readinessCard">${readinessCardHTML(day, ts)}</div>
+
+    <h2 class="section">How you slept</h2>
+    <div class="card">
+      ${numberField('sleep', 'Hours slept', 'e.g. 7.5', '0.25')}
+      ${ratingHTML('sleepQuality', day)}
+    </div>
+
+    <h2 class="section">How you feel</h2>
+    <div class="card">
+      ${ratingHTML('energy', day)}
+      ${ratingHTML('soreness', day)}
+      ${ratingHTML('stress', day)}
+    </div>
+
+    <h2 class="section">Body</h2>
+    <div class="card">
+      ${numberField('weight', 'Bodyweight (' + unit() + ')', 'e.g. 78', '0.1')}
+      ${numberField('restingHR', 'Resting HR (bpm)', 'e.g. 54', '1')}
+      <label class="field" style="margin:4px 0 0">
+        <span>Notes</span>
+        <textarea id="dayNotes" rows="2" placeholder="Anything worth remembering">${esc(day.notes || '')}</textarea>
+      </label>
+    </div>
+
+    ${logged.length ? `
+      <h2 class="section">Trends</h2>
+      <div class="card">
+        <div class="seg scroll">
+          ${Object.keys(DAILY_METRICS).map((k) => `
+            <button data-dmetric="${k}" class="${dailyMetric === k ? 'on' : ''}">${DAILY_METRICS[k].label}</button>`).join('')}
+        </div>
+        ${series.length > 1 ? `
+          <div class="chart-read">
+            <div>
+              <div class="v">${fmtN(series[series.length - 1].value)}<span style="font-size:12px;color:var(--muted)">${dm.suffix()}</span></div>
+              <div class="sub" style="margin:0">latest · ${series.length} day${series.length === 1 ? '' : 's'} logged</div>
+            </div>
+            <div class="d">${esc(fmtDate(series[series.length - 1].date))}</div>
+          </div>
+          <div class="chart-wrap">${chartSVG(series, dm.get, series.length - 1, dm.label)}</div>
+        ` : `<div class="empty" style="padding:22px 10px">
+               <div>Not enough logged yet</div>
+               <div class="sub">Two days of ${esc(dm.label.toLowerCase())} and a trend appears.</div>
+             </div>`}
+      </div>` : ''}`;
+
+  $('#dayBack').onclick = () => { dailyOffset += 1; renderDaily(app); window.scrollTo(0, 0); };
+  $('#dayFwd').onclick = () => { if (dailyOffset > 0) { dailyOffset -= 1; renderDaily(app); window.scrollTo(0, 0); } };
+
+  // Writing anything creates the day's record lazily, so simply looking at a
+  // date never leaves an empty entry behind.
+  const edit = (mutate) => {
+    mutate(dailyUpsert(key));
+    save();
+    $('#readinessCard').innerHTML = readinessCardHTML(dailyFor(key), ts);
+  };
+
+  // Number fields and notes write without re-rendering, so typing keeps focus;
+  // only the readiness card above repaints.
+  app.querySelectorAll('[data-num]').forEach((el) => {
+    el.oninput = () => edit((d) => { d[el.dataset.num] = el.value; });
+  });
+  $('#dayNotes').oninput = () => edit((d) => { d.notes = $('#dayNotes').value; });
+
+  app.querySelectorAll('[data-rate]').forEach((el) => {
+    el.onclick = () => {
+      const field = el.dataset.rate;
+      const value = +el.dataset.v;
+      edit((d) => { if (d[field] === value) delete d[field]; else d[field] = value; });
+      const now = dailyFor(key)[field];
+      el.parentElement.querySelectorAll('.rate-pill').forEach((p) => {
+        p.classList.toggle('on', +p.dataset.v === now);
+      });
+    };
+  });
+
+  app.querySelectorAll('[data-dmetric]').forEach((el) => {
+    el.onclick = () => { dailyMetric = el.dataset.dmetric; renderDaily(app); };
+  });
+}
+
+function ratingHTML(field, day) {
+  const meta = RATINGS[field];
+  return `
+    <div style="margin-bottom:14px">
+      <div class="row between" style="margin-bottom:7px">
+        <span class="badge">${meta.label}</span>
+        <span class="rate-ends">${esc(meta.low)} → ${esc(meta.high)}</span>
+      </div>
+      <div class="rate-row">
+        ${[1, 2, 3, 4, 5].map((n) => `
+          <button class="rate-pill ${day[field] === n ? 'on' : ''}" data-rate="${field}" data-v="${n}">${n}</button>`).join('')}
+      </div>
+    </div>`;
+}
+
+/* ============================================================
    History
    ============================================================ */
 let historyTab = 'log';   // 'log' | 'records'
@@ -1497,7 +1795,7 @@ function renderExercise(app, exerciseId) {
           <div class="d">${esc(fmtDate(point.date))}<br>
             ${prevPoint ? 'vs prev ' + deltaHTML(m.get(point), m.get(prevPoint)) : 'first session'}</div>
         </div>
-        <div class="chart-wrap">${chartSVG(series, chartMetric, sel)}</div>
+        <div class="chart-wrap">${chartSVG(series, m.get, sel, m.label)}</div>
         <div class="sub" style="text-align:center;margin-top:8px">Tap a point for that session</div>
       ` : `<div class="empty" style="padding:26px 10px">
              <div>Only one session logged</div>
