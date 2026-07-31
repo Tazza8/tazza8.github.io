@@ -193,17 +193,29 @@ all typed in by hand, keyed by local calendar date via `dateKey()` — not
 `toISOString()`, which would file a late-evening check-in under the next day
 for anyone west of UTC.
 
-**There is no path to reading this automatically, and it isn't a matter of
+**Nothing can be read off the phone's own sensors, and it isn't a matter of
 effort.** On iOS a web app gets no HealthKit access (there is no web API at
 all), no Web Bluetooth (Apple declined it in 2020 along with WebUSB and the
 sensor APIs), and no background execution (no Background Sync, Periodic
 Background Sync or Background Fetch). Passive 24/7 measurement of the sort a
-Whoop or Oura does is therefore impossible from this codebase; it would need a
-native app. Don't accept a task premised on adding it here. The one route that
-*could* work is pulling from a wearable vendor's cloud API (Whoop, Oura and
-Garmin all have OAuth REST APIs), which needs a server to hold the client
-secret — a Supabase Edge Function would do it, and would be the first
-server-side code in the project.
+Whoop strap does is therefore impossible from this codebase; it would need a
+native app. Don't accept a task premised on adding it here.
+
+**The one viable route is the wearable vendor's cloud API.** The user wears a
+COROS PACE 3; COROS runs an OAuth 2.0 API open to any platform meeting their
+requirements — you apply to `api@coros.com` and they issue a Client ID and
+Secret. As of this writing that application has not been made, so there is no
+sync and no credentials. Two things to know before starting it:
+- A client secret cannot live in a public repo or in browser JavaScript, so it
+  needs a **Supabase Edge Function** to hold it and do the token exchange.
+  That would be the first server-side code in this project and would end the
+  "no server code of ours" property claimed at the top of this file. Say so
+  explicitly rather than letting it happen quietly.
+- COROS's help centre returns 403 to automated fetches, so the endpoints and
+  payload shape aren't knowable until the credentials arrive with their docs.
+  **Don't invent endpoints.** Wait for the real documentation.
+The agreed merge rule when it does land: synced values win, manual entries
+fill the gaps, and fields the watch didn't supply stay editable.
 
 `renderDaily` deliberately mirrors Whoop's home screen: the **Recovery /
 Strain / Sleep** triad of dials, then one detail card per metric, then a
@@ -234,15 +246,31 @@ wholesale on every edit so the rings track what you type. The strip's day
 buttons therefore use a **delegated** click handler on `#overview` — binding
 them individually would break on the first keystroke.
 
-`readiness(day, ts)` is consequently a **subjective** score and is labelled as
-one in the UI — never present it as a physiological measurement. It's a
-weighted mean over only the components actually filled in (so a partial
-check-in still scores, leaning on what's there), plus one objective input:
-`loadRatio()`, the acute:chronic workload ratio of the last 3 days of training
-volume against the 28-day norm. Because training load arrives free, it's
-excluded from the `selfReported` count that decides whether the card shows a
-verdict word or just "Partial" — otherwise a check-in with one answer would
-flatter itself to "Primed".
+`readiness(day, ts)` is a weighted mean over only the components actually
+filled in, so a partial check-in still scores, leaning on what's there. The
+weights are **relative, not absolute** — they're normalised by whichever
+components are present, which is what lets HRV dominate when it exists without
+changing how a purely self-reported check-in behaves.
+
+- **HRV and resting HR are scored against the user's own rolling 30-day
+  baseline** (`baselineFor`), never as absolute numbers: an HRV of 45 is
+  strong for one person and poor for another. Nothing is scored until there
+  are at least 5 prior readings, or the first few mornings would swing
+  recovery wildly off a sample of one. HRV uses ±20% off baseline for the full
+  range; resting HR is inverted (lower is better) and uses a steeper
+  multiplier because it moves over a much narrower percentage range.
+- `loadRatio()` — the acute:chronic ratio of the last 3 days of training volume
+  against the 28-day norm — is the one component that arrives free. It's
+  excluded from the `answered` count that decides whether the card shows a
+  verdict or just "Partial", because otherwise a check-in with one answer
+  would flatter itself.
+- `measured` says whether any component was measured rather than felt, and
+  **the disclaimer is worded off it**. With HRV present, recovery genuinely is
+  part physiological and the copy says so; without it, the copy says plainly
+  that it's self-reported. Don't let the honest-when-empty wording drift.
+- The "biggest drag" line only renders when the worst component scores below
+  45. At exactly baseline HRV scores 50, which made it the lowest component on
+  a perfectly normal day and read as though something were wrong.
 
 **Rep targets flow one way**: `startSession` copies each program exercise's
 `reps` onto the session entry as `target`. Editing the program afterwards must

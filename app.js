@@ -453,6 +453,24 @@ const RATINGS = {
 
 const hasVal = (v) => v !== undefined && v !== null && v !== '';
 const ratingScore = (r, better) => (better === 'high' ? (r - 1) : (5 - r)) / 4 * 100;
+const clamp100 = (v) => Math.max(0, Math.min(100, v));
+
+/* Rolling mean of a numeric field over the days *before* the given date.
+
+   HRV and resting heart rate are meaningless as absolute numbers — an HRV of
+   45 is strong for one person and poor for another — so they're only ever
+   scored against the user's own recent baseline. Nothing is scored until
+   there are at least five prior readings, otherwise the first few mornings
+   would swing recovery wildly off a sample of one. */
+function baselineFor(field, key, days = 30) {
+  const cutoff = new Date(key + 'T12:00:00').getTime() - days * 86400000;
+  const vals = state.daily
+    .filter((d) => d.date < key
+      && new Date(d.date + 'T12:00:00').getTime() >= cutoff
+      && hasVal(d[field]) && num(d[field]) > 0)
+    .map((d) => num(d[field]));
+  return vals.length >= 5 ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+}
 
 function dailyFor(key) {
   return state.daily.find((d) => d.date === key) || null;
@@ -488,18 +506,46 @@ function loadRatio(ts = Date.now()) {
 /* Weighted mean of whatever the user actually filled in — a check-in with
    only sleep and energy still scores, it just leans on those two. Returns
    null when nothing scorable is present, so the UI can prompt instead of
-   showing a meaningless zero. */
+   showing a meaningless zero.
+
+   Weights are relative, not absolute: they're normalised by whichever
+   components are present. That's what lets HRV dominate when it's there
+   without changing how a purely self-reported check-in behaves. */
 function readiness(day, ts) {
   if (!day) return null;
   const parts = [];
 
+  // HRV against your own baseline is the strongest single signal available,
+  // so it outweighs everything else when present. ±20% off baseline spans
+  // the full range.
+  const hrvBase = baselineFor('hrv', day.date);
+  if (hasVal(day.hrv) && num(day.hrv) > 0 && hrvBase) {
+    parts.push({
+      key: 'hrv',
+      weight: 0.30,
+      score: clamp100(50 + ((num(day.hrv) - hrvBase) / hrvBase) * 250),
+      label: 'HRV',
+    });
+  }
+  // Resting HR is inverted — below baseline is the good direction — and moves
+  // over a much narrower percentage range, hence the steeper multiplier.
+  const rhrBase = baselineFor('restingHR', day.date);
+  if (hasVal(day.restingHR) && num(day.restingHR) > 0 && rhrBase) {
+    parts.push({
+      key: 'restingHR',
+      weight: 0.15,
+      score: clamp100(50 + ((rhrBase - num(day.restingHR)) / rhrBase) * 500),
+      label: 'resting HR',
+    });
+  }
+
   const hours = num(day.sleep);
   if (hasVal(day.sleep) && hours > 0) {
-    parts.push({ key: 'sleep', weight: 0.25, score: Math.min(1, hours / SLEEP_TARGET) * 100, label: `${fmtN(hours)}h sleep` });
+    parts.push({ key: 'sleep', weight: 0.20, score: Math.min(1, hours / SLEEP_TARGET) * 100, label: `${fmtN(hours)}h sleep` });
   }
   Object.entries(RATINGS).forEach(([key, meta]) => {
     if (!hasVal(day[key])) return;
-    const weight = key === 'energy' ? 0.25 : key === 'stress' ? 0.10 : 0.15;
+    const weight = key === 'energy' ? 0.12 : key === 'stress' ? 0.06 : 0.10;
     parts.push({ key, weight, score: ratingScore(num(day[key]), meta.better), label: meta.label.toLowerCase() });
   });
 
@@ -518,11 +564,14 @@ function readiness(day, ts) {
   const score = Math.round(parts.reduce((t, p) => t + p.score * p.weight, 0) / total);
   // Whatever scored worst is what the user can most usefully act on.
   const worst = parts.reduce((w, p) => (p.score < w.score ? p : w), parts[0]);
-  // How many of the five self-reported fields backed this up. Training load
-  // doesn't count — it arrives free and would flatter a near-empty check-in.
-  // One field answered is not a readiness verdict, and the card says so.
-  const selfReported = parts.filter((p) => p.key !== 'load').length;
-  return { score, parts, worst, ratio, selfReported };
+  // How many inputs the user actually supplied. Training load doesn't count —
+  // it arrives free and would flatter a near-empty check-in. One answer is
+  // not a recovery verdict, and the card says so.
+  const answered = parts.filter((p) => p.key !== 'load').length;
+  // Whether any of it was measured rather than felt, which changes how the
+  // disclaimer at the foot of the screen is worded.
+  const measured = parts.some((p) => p.key === 'hrv' || p.key === 'restingHR');
+  return { score, parts, worst, ratio, answered, measured };
 }
 
 /* Chartable daily metrics, same shape as METRICS. The `readiness` key keeps
@@ -531,6 +580,7 @@ const DAILY_METRICS = {
   readiness:  { label: 'Recovery',  suffix: () => '%',          get: (p) => p.value },
   strain:     { label: 'Strain',    suffix: () => '',           get: (p) => p.value },
   sleep:      { label: 'Sleep',     suffix: () => ' h',         get: (p) => p.value },
+  hrv:        { label: 'HRV',       suffix: () => ' ms',        get: (p) => p.value },
   energy:     { label: 'Energy',    suffix: () => ' / 5',       get: (p) => p.value },
   weight:     { label: 'Weight',    suffix: () => ' ' + unit(), get: (p) => p.value },
   restingHR:  { label: 'Rest HR',   suffix: () => ' bpm',       get: (p) => p.value },
@@ -1567,7 +1617,7 @@ function overviewHTML(day, ts) {
   const r = readiness(day, ts);
   // Under three answers there isn't enough to call it: the dial goes neutral
   // and no verdict is offered.
-  const thin = !r || r.selfReported < 3;
+  const thin = !r || r.answered < 3;
   const rec = r ? r.score : null;
 
   const hours = num(day.sleep);
@@ -1600,9 +1650,11 @@ function overviewHTML(day, ts) {
       ${rec == null
         ? `<div class="sub">Answer anything below and your recovery appears here.</div>`
         : thin
-          ? `<div class="sub">Based on ${r.selfReported} of 5 answers — fill in more for a real read.</div>`
+          ? `<div class="sub">Based on ${r.answered} of 7 inputs — fill in more for a real read.</div>`
           : `<div class="metric-line">${esc(recoveryPhrase(rec))}</div>
-             <div class="sub">Biggest drag: ${esc(r.worst.label)}</div>
+             ${r.worst.score < 45
+               ? `<div class="sub">Biggest drag: ${esc(r.worst.label)}</div>`
+               : ''}
              <div class="target-row">
                <span class="badge">Strain target</span>
                <span class="target-range">${fmtN(target[0])} – ${fmtN(target[1])}</span>
@@ -1635,9 +1687,12 @@ function overviewHTML(day, ts) {
         : `<div class="sub">${strainRef() ? 'No training logged today.' : 'Log a few workouts and strain starts scaling to your own history.'}</div>`}
     </div>
 
-    <div class="sub disclaimer">Recovery is self-reported — how you say you feel, not a
-      physiological measurement. Strain is computed from the weight you moved, scaled to
-      your own last 90 days.</div>`;
+    <div class="sub disclaimer">${r && r.measured
+      ? `Recovery blends the HRV and resting heart rate you entered — scored against your own
+         30-day baseline — with how you say you feel.`
+      : `Recovery is self-reported — how you say you feel, not a physiological measurement.
+         Add HRV and resting HR from your watch to ground it in real data.`}
+      Strain is computed from the weight you moved, scaled to your own last 90 days.</div>`;
 }
 
 /* The last seven days at a glance; each bar jumps to that day. */
@@ -1715,6 +1770,7 @@ function renderDaily(app) {
     <div class="card">
       ${numberField('weight', 'Bodyweight (' + unit() + ')', 'e.g. 78', '0.1')}
       ${numberField('restingHR', 'Resting HR (bpm)', 'e.g. 54', '1')}
+      ${numberField('hrv', 'HRV (ms)', 'e.g. 62', '1')}
       <label class="field" style="margin:4px 0 0">
         <span>Notes</span>
         <textarea id="dayNotes" rows="2" placeholder="Anything worth remembering">${esc(day.notes || '')}</textarea>
