@@ -205,6 +205,20 @@ Garmin all have OAuth REST APIs), which needs a server to hold the client
 secret — a Supabase Edge Function would do it, and would be the first
 server-side code in the project.
 
+`renderDaily` is laid out as an at-a-glance overview: a readiness ring, a
+training suggestion, sleep-performance and training-load rings, then a tappable
+seven-day strip, with the check-in form and trend charts below. The rings'
+arcs take a **flat** palette colour, not the brand gradient, because here the
+colour is the signal — `toneFor()` maps the score to `--brand-1` / `--brand-2` /
+`--danger`, and a poor score must not render in the same cheerful teal as a
+good one. `loadTone()` inverts that logic deliberately: a load ratio well above
+your norm is a spike, so it goes red rather than green.
+
+The whole overview plus the strip live inside `#overview`, which is replaced
+wholesale on every edit so the rings track what you type. The strip's day
+buttons therefore use a **delegated** click handler on `#overview` — binding
+them individually would break on the first keystroke.
+
 `readiness(day, ts)` is consequently a **subjective** score and is labelled as
 one in the UI — never present it as a physiological measurement. It's a
 weighted mean over only the components actually filled in (so a partial

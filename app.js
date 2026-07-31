@@ -1484,31 +1484,110 @@ function finishSession() {
 let dailyMetric = 'readiness';
 let dailyOffset = 0;      // 0 = today, 1 = yesterday, … (never negative)
 
-function readinessCardHTML(day, ts) {
+/* Progress ring. The arc takes a flat palette colour rather than the brand
+   gradient, because here colour is carrying meaning — a poor score must not
+   render in the same cheerful teal as a good one. The three tones are all
+   existing palette vars, so the ramp still governs the look. */
+const RING_R = 42;
+const RING_C = 2 * Math.PI * RING_R;
+
+function ringHTML(pct, tone, big) {
+  const dash = RING_C * Math.max(0, Math.min(1, (pct || 0) / 100));
+  return `
+    <div class="ring-wrap">
+      <svg viewBox="0 0 100 100" aria-hidden="true">
+        <circle class="ring-track" cx="50" cy="50" r="${RING_R}"/>
+        <circle class="ring-arc ${tone}" cx="50" cy="50" r="${RING_R}"
+                stroke-dasharray="${dash.toFixed(1)} ${(RING_C - dash).toFixed(1)}"
+                transform="rotate(-90 50 50)"/>
+      </svg>
+      <div class="ring-mid">${big}</div>
+    </div>`;
+}
+
+const toneFor = (score) => (score >= 65 ? 'tone-high' : score >= 45 ? 'tone-mid' : 'tone-low');
+
+/* Load sits best around your recent norm. Well above it is a spike worth
+   noticing, so it reads as a warning rather than an achievement. */
+const loadTone = (ratio) => (ratio > 1.5 ? 'tone-low' : ratio >= 0.8 && ratio <= 1.3 ? 'tone-high' : 'tone-mid');
+
+/* A suggestion, not a prescription — the input is self-report. */
+const readinessAdvice = (score) =>
+  score >= 80 ? 'Good day to push. Chase a top set.'
+  : score >= 65 ? 'Train as planned.'
+  : score >= 45 ? 'Hold volume steady rather than adding to it.'
+  : 'A lighter session or a rest day is the sensible call.';
+
+function overviewHTML(day, ts) {
   const r = readiness(day, ts);
   if (!r) {
-    return `<div class="title">No check-in yet</div>
-      <div class="sub">Fill anything in below and a readiness score appears here.</div>`;
+    return `<div class="card">
+      <div class="title">No check-in yet</div>
+      <div class="sub">Answer anything below and your readiness appears here.</div>
+    </div>`;
   }
-  const load = r.ratio == null ? '' :
-    r.ratio > 1.3 ? ' · training load is up on your usual'
-    : r.ratio < 0.7 ? ' · training load is down on your usual' : '';
-  // Under three answers there isn't enough to call it, so the number is shown
-  // plainly rather than in brand colours and the verdict word is withheld.
+  // Under three answers there isn't enough to call it: the ring goes neutral
+  // and the verdict word is withheld.
   const thin = r.selfReported < 3;
+  const hours = num(day.sleep);
+  const sleepPct = hours > 0 ? Math.round((hours / SLEEP_TARGET) * 100) : null;
+
   return `
-    <div class="readiness">
-      <div class="readiness-score ${thin ? 'thin' : 'grad-text'}">${r.score}</div>
-      <div>
-        <div class="readiness-word">${thin ? 'Partial' : readinessWord(r.score)}</div>
-        <div class="sub" style="margin:0">${thin
-          ? `Based on ${r.selfReported} of 5 answers — fill in more for a real read`
-          : `Biggest drag: ${esc(r.worst.label)}${load}`}</div>
+    <div class="card hero">
+      ${ringHTML(r.score, thin ? 'tone-thin' : toneFor(r.score), r.score)}
+      <div class="grow">
+        <div class="badge">Readiness</div>
+        <div class="hero-word">${thin ? 'Partial' : readinessWord(r.score)}</div>
+        <div class="sub" style="margin:2px 0 0">${thin
+          ? `Based on ${r.selfReported} of 5 answers`
+          : `Biggest drag: ${esc(r.worst.label)}`}</div>
       </div>
     </div>
-    <div class="sub" style="margin-top:10px;font-size:11px;opacity:.8">
-      Self-reported — this is how you say you feel plus your recent training load,
-      not a physiological measurement.</div>`;
+    ${thin ? '' : `<div class="card advice">${esc(readinessAdvice(r.score))}</div>`}
+    <div class="duo">
+      <div class="card mini">
+        ${sleepPct == null
+          ? ringHTML(0, 'tone-thin', '—')
+          : ringHTML(Math.min(100, sleepPct), toneFor(Math.min(100, sleepPct)), sleepPct + '%')}
+        <div class="badge">Sleep</div>
+        <div class="sub" style="margin:2px 0 0">${hours > 0 ? `${fmtN(hours)} of ${SLEEP_TARGET}h` : 'not logged'}</div>
+      </div>
+      <div class="card mini">
+        ${r.ratio == null
+          ? ringHTML(0, 'tone-thin', '—')
+          : ringHTML(Math.min(100, (r.ratio / 1.5) * 100), loadTone(r.ratio), Math.round(r.ratio * 100) + '%')}
+        <div class="badge">Load</div>
+        <div class="sub" style="margin:2px 0 0">${r.ratio == null ? 'needs history' : 'of your norm'}</div>
+      </div>
+    </div>
+    <div class="sub disclaimer">Self-reported — how you say you feel, plus your recent
+      training load. Not a physiological measurement.</div>`;
+}
+
+/* The last seven days at a glance; each bar jumps to that day. */
+function stripHTML() {
+  const DAY = 86400000;
+  return `
+    <h2 class="section">Last 7 days</h2>
+    <div class="strip">
+      ${Array.from({ length: 7 }, (_, i) => {
+        const off = 6 - i;
+        const t = Date.now() - off * DAY;
+        const key = dateKey(t);
+        const d = dailyFor(key);
+        const r = d ? readiness(d, new Date(key + 'T12:00:00').getTime()) : null;
+        const score = r ? r.score : null;
+        return `
+          <button class="strip-day ${off === dailyOffset ? 'sel' : ''}" data-off="${off}"
+                  aria-label="${esc(fmtDate(t))}${score == null ? ', no check-in' : ', readiness ' + score}">
+            <div class="strip-track">
+              ${score == null ? '' : `<div class="strip-fill ${toneFor(score)}" style="height:${Math.max(8, score)}%"></div>`}
+            </div>
+            <div class="strip-num">${score == null ? '·' : score}</div>
+            <div class="strip-letter">${esc(new Date(t).toLocaleDateString(undefined, { weekday: 'narrow' }))}</div>
+          </button>`;
+      }).join('')}
+    </div>`;
 }
 
 function renderDaily(app) {
@@ -1541,7 +1620,7 @@ function renderDaily(app) {
       <button class="btn sm" id="dayFwd" aria-label="Next day" ${dailyOffset === 0 ? 'disabled style="opacity:.35"' : ''}>›</button>
     </div>
 
-    <div class="card" id="readinessCard">${readinessCardHTML(day, ts)}</div>
+    <div id="overview">${overviewHTML(day, ts)}${stripHTML()}</div>
 
     <h2 class="section">How you slept</h2>
     <div class="card">
@@ -1596,7 +1675,17 @@ function renderDaily(app) {
   const edit = (mutate) => {
     mutate(dailyUpsert(key));
     save();
-    $('#readinessCard').innerHTML = readinessCardHTML(dailyFor(key), ts);
+    $('#overview').innerHTML = overviewHTML(dailyFor(key), ts) + stripHTML();
+  };
+
+  // Delegated, so it survives the innerHTML swap above rather than needing
+  // rebinding after every keystroke.
+  $('#overview').onclick = (e) => {
+    const bar = e.target.closest('[data-off]');
+    if (!bar) return;
+    dailyOffset = +bar.dataset.off;
+    renderDaily(app);
+    window.scrollTo(0, 0);
   };
 
   // Number fields and notes write without re-rendering, so typing keeps focus;
