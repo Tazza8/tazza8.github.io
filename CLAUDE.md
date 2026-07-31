@@ -56,9 +56,14 @@ had — accounts were added by changing *where* that blob is persisted, not its
 shape, so every render/helper function below is unaffected. `defaultState()`
 defines the shape:
 ```
-{ programs, customExercises, history, active, settings }
+{ programs, plans, customExercises, history, active, settings }
 ```
-- `programs` — user-defined workout templates (`{ id, name, exercises: [{exerciseId, sets}] }`)
+- `programs` — user-defined workout templates
+  (`{ id, name, exercises: [{ exerciseId, sets, reps }] }`). `reps` is a free-text
+  *target* ("8-12", "5", "AMRAP") — deliberately not a number, so it can say
+  whatever a program actually prescribes. Programs written before targets
+  existed simply have no `reps` key; every read goes through `item.reps || ''`.
+- `plans` — multi-week schedules built out of programs; see **Plans** below.
 - `customExercises` — user-added exercises, merged with `EXERCISE_LIBRARY` (from
   `exercises.js`) via `allExercises()`. Exercise ids are stable and referenced from
   history, so never reuse/repurpose an id.
@@ -159,6 +164,40 @@ renderSignIn(app)`; nothing else in `app.js` runs until a session exists.
   would just break that detection for zero user-visible benefit. Don't "fix"
   this to match current branding.
 
+**Plans** (`app.js`, the section above `startSession`) are a layer on top of
+programs, not a replacement: `{ id, name, weeks, rotation: [programId…], progress }`.
+"10 weeks, full body, 3× a week as A/B/C" is `weeks: 10, rotation: [A, B, C]`.
+- **Every week runs the same rotation**, by design. Progression is meant to come
+  from the weight on the bar, not from authoring thirty separate workouts. That
+  keeps the whole plan a flat ordered queue of `weeks × rotation.length`
+  sessions, which is why a single integer — `progress`, the number completed —
+  is enough to place you in it (`planWeekOf`/`planLetterOf` derive the rest).
+  Per-week overrides would break that and need a real schedule array.
+- `rotation` holds program **ids**, so editing a program updates it everywhere
+  it's used. Ids may repeat (A/B/A is legal), and a program deleted out from
+  under a plan leaves a hole the UI labels rather than crashing on.
+- An **empty rotation** makes `planTotal` 0 and `planWeekOf` divide by zero, so
+  every caller guards on `planTotal(plan)` first. Keep that guard.
+- Sessions started from a plan carry `planId`, `planSlot` and `planLabel`.
+  `planLabel` is a **snapshot string** ("Week 3 · B") rather than something
+  recomputed on read, so history stays truthful after the plan is resized,
+  reset or deleted. `finishSession` advances `progress` with `Math.max`, never
+  assignment — replaying an earlier week must not undo later progress.
+
+**Rep targets flow one way**: `startSession` copies each program exercise's
+`reps` onto the session entry as `target`. Editing the program afterwards must
+not rewrite what a logged workout told you to do, which is why it's copied
+rather than looked up. In `renderSession` the target drives the reps
+placeholder and the `.target-pill`; ticking a blank set fills reps from
+`targetReps(entry.target)` (the first number in the string) so what gets
+recorded is always what the placeholder was showing.
+
+**`openExercise(id, from)`, never `go('exercise', id)`**: the chart is reachable
+from History, from a logged workout and from a live session, so "back" isn't a
+fixed destination — `exerciseReturn` records the origin and `#backBtn` reads it.
+Calling `go('exercise', …)` directly strands the user wherever the last caller
+happened to be.
+
 **Rendering inputs without losing focus**: set-row inputs in `renderSession` only
 write to `state` on `oninput` — they do NOT trigger a re-render. Re-rendering the
 whole session on every keystroke would steal focus mid-type. Re-render only
@@ -211,6 +250,13 @@ like `chest-press`) and `MUSCLE_ORDER` (display grouping). Custom exercises get
 ids prefixed `c-` (see `openPicker`). `exerciseById()` in `app.js` is the only
 lookup path — never index `EXERCISE_LIBRARY` directly, since custom exercises
 live in `state.customExercises`.
+
+The library is ~180 entries grouped finer than chest/back/legs (Quads,
+Hamstrings, Glutes and Calves are separate; so are Biceps, Triceps and
+Forearms) purely so the picker doesn't become one forty-row section. `muscle`
+is display-only — nothing is persisted against it, so regrouping an exercise
+is safe. Exercise **ids** are not: they're referenced from every logged
+session, so add freely but never rename, reuse or repurpose one.
 
 ## Brand
 

@@ -8,6 +8,7 @@ const lsKey = (userId) => LS_KEY + '.' + userId;
 
 const defaultState = () => ({
   programs: [],
+  plans: [],            // multi-week schedules built out of programs
   customExercises: [],
   history: [],          // finished sessions, newest first
   active: null,         // in-progress session
@@ -147,6 +148,19 @@ function exerciseById(id) {
   return allExercises().find((e) => e.id === id) || { id, name: 'Unknown exercise', muscle: 'Other' };
 }
 const unit = () => state.settings.unit;
+
+/* A rep target is free text ("8-12", "5", "AMRAP", "30s") so it can express
+   whatever a program actually prescribes. This pulls out the first number for
+   the one place that needs a real value — filling in a set ticked done while
+   blank — and returns '' when there isn't one, which callers treat as "no
+   target, use last time's". */
+const targetReps = (t) => (String(t || '').match(/\d+/) || [''])[0];
+
+/* Rising-line glyph marking anything that opens an exercise's progress chart.
+   Inline SVG rather than an emoji so it inherits currentColor and matches the
+   angular house style. */
+const TREND_ICON = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+  stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12 L6 7 L9.5 10 L14 3.5"/></svg>`;
 
 function fmtDate(ts) {
   const d = new Date(ts);
@@ -510,6 +524,18 @@ function enableDragReorder(container, onReorder) {
 let chartMetric = 'e1rm';
 let chartSel = null;   // index of the highlighted point
 
+/* The exercise chart is reachable from History, from a logged workout and
+   from a live session, so "back" can't be a fixed destination — this records
+   where the user came from. Always open the view through openExercise(), not
+   go('exercise', ...), or back will strand them somewhere they weren't. */
+let exerciseReturn = { name: 'history', arg: null };
+
+function openExercise(exerciseId, from) {
+  exerciseReturn = from || { name: 'history', arg: null };
+  chartSel = null;
+  go('exercise', exerciseId);
+}
+
 function chartSVG(series, metric, sel) {
   const W = 320, H = 148, padL = 36, padR = 10, padT = 12, padB = 20;
   const get = METRICS[metric].get;
@@ -621,6 +647,7 @@ function render() {
   switch (view.name) {
     case 'home': return renderHome(app);
     case 'program': return renderProgram(app, view.arg);
+    case 'plan': return renderPlan(app, view.arg);
     case 'session': return renderSession(app);
     case 'history': return renderHistory(app);
     case 'historyDetail': return renderHistoryDetail(app, view.arg);
@@ -628,16 +655,23 @@ function render() {
   }
 }
 
-/* ---------- home: program list ---------- */
+/* ---------- home: plans + programs ---------- */
 function renderHome(app) {
   $('#title').textContent = 'Programs';
 
-  if (!state.programs.length) {
+  const newButtons = `
+    <div class="row" style="gap:10px;margin-top:14px">
+      <button class="btn grow" id="newProgram">+ Program</button>
+      <button class="btn grow" id="newPlan">+ Plan</button>
+    </div>`;
+
+  if (!state.programs.length && !state.plans.length) {
     app.innerHTML = `
       <div class="empty">
         <div class="big">${evolvMark(44)}</div>
-        <div>No programs yet.</div>
-        <div class="sub">Build one by picking the exercises you train.</div>
+        <div>Nothing here yet.</div>
+        <div class="sub">Start with a program — a list of exercises you train together.
+          Once you have a few, group them into a multi-week plan.</div>
       </div>
       <button class="btn primary block" id="newProgram">+ New program</button>`;
   } else {
@@ -647,13 +681,45 @@ function renderHome(app) {
           <div class="row between">
             <div class="grow">
               <div class="title">Workout in progress</div>
-              <div class="sub">${esc(state.active.programName)} · ${doneSets(state.active)}/${totalSets(state.active)} sets done</div>
+              <div class="sub">${esc(state.active.planLabel ? state.active.planLabel + ' · ' : '')}${esc(state.active.programName)} · ${doneSets(state.active)}/${totalSets(state.active)} sets done</div>
             </div>
             <div class="btn primary sm">Resume</div>
           </div>
         </div>` : ''}
+
+      ${state.plans.length ? `
+        <h2 class="section">Your plans</h2>
+        ${state.plans.map((plan) => {
+          const total = planTotal(plan);
+          const done = planDone(plan);
+          const complete = total > 0 && done >= total;
+          const nextProgram = total ? programById(plan.rotation[done % plan.rotation.length]) : null;
+          return `
+          <div class="card">
+            <div class="row between">
+              <div class="grow" data-plan="${plan.id}" style="cursor:pointer">
+                <div class="title truncate">${esc(plan.name)}</div>
+                <div class="sub truncate">${!total
+                  ? 'Tap to add workouts'
+                  : complete
+                    ? `Complete · ${total} workouts done`
+                    : `Next: ${esc(planSlotLabel(plan, done))}${nextProgram ? ' · ' + esc(nextProgram.name) : ''}`}</div>
+              </div>
+              ${total && !complete && nextProgram
+                ? `<button class="btn primary sm" data-plan-start="${plan.id}">Start</button>`
+                : ''}
+            </div>
+            ${total ? `
+              <div class="plan-bar" role="img" aria-label="${done} of ${total} workouts done">
+                <div style="width:${Math.round((done / total) * 100)}%"></div>
+              </div>
+              <div class="sub" style="margin-top:6px">${done} of ${total} workouts · ${plan.weeks} week${plan.weeks === 1 ? '' : 's'}</div>
+            ` : ''}
+          </div>`;
+        }).join('')}` : ''}
+
       <h2 class="section">Your programs</h2>
-      ${state.programs.map((p) => {
+      ${state.programs.length ? state.programs.map((p) => {
         const last = state.history.find((h) => h.programId === p.id);
         return `
         <div class="card">
@@ -665,20 +731,42 @@ function renderHome(app) {
             <button class="btn primary sm" data-start="${p.id}">Start</button>
           </div>
         </div>`;
-      }).join('')}
-      <button class="btn block" id="newProgram" style="margin-top:14px">+ New program</button>`;
+      }).join('') : `<div class="empty" style="padding:22px">
+          <div>No programs yet</div>
+          <div class="sub">Plans are built out of these.</div>
+        </div>`}
+      ${newButtons}`;
   }
 
-  $('#newProgram').onclick = () => {
+  const addProgram = () => {
     const p = { id: uid(), name: '', exercises: [] };
     state.programs.push(p);
     save();
     go('program', p.id);
   };
+  $('#newProgram').onclick = addProgram;
+  if ($('#newPlan')) {
+    $('#newPlan').onclick = () => {
+      const plan = { id: uid(), name: '', weeks: 10, rotation: [], progress: 0 };
+      state.plans.push(plan);
+      save();
+      go('plan', plan.id);
+    };
+  }
   const resume = $('#resume');
   if (resume) resume.onclick = () => go('session');
   app.querySelectorAll('[data-edit]').forEach((el) => {
     el.onclick = () => go('program', el.dataset.edit);
+  });
+  app.querySelectorAll('[data-plan]').forEach((el) => {
+    el.onclick = () => go('plan', el.dataset.plan);
+  });
+  app.querySelectorAll('[data-plan-start]').forEach((el) => {
+    el.onclick = () => {
+      const plan = state.plans.find((x) => x.id === el.dataset.planStart);
+      const slot = planDone(plan);
+      startSession(plan.rotation[slot % plan.rotation.length], plan, slot);
+    };
   });
   app.querySelectorAll('[data-start]').forEach((el) => {
     el.onclick = () => startSession(el.dataset.start);
@@ -716,6 +804,11 @@ function renderProgram(app, id) {
           <div style="min-width:70px;text-align:center;font-weight:600">${item.sets} set${item.sets === 1 ? '' : 's'}</div>
           <button class="btn sm grow" data-sets="1" data-i="${i}">+</button>
         </div>
+        <label class="row between" style="margin-top:9px">
+          <span class="badge">Target reps</span>
+          <input class="target-input" type="text" data-reps="${i}" value="${esc(item.reps || '')}"
+                 placeholder="e.g. 8-12" aria-label="Target reps for ${esc(ex.name)}">
+        </label>
       </div>`;
     }).join('') : `<div class="empty" style="padding:26px"><div>No exercises yet</div></div>`}
     </div>
@@ -737,6 +830,15 @@ function renderProgram(app, id) {
       item.sets = Math.min(12, Math.max(1, item.sets + +el.dataset.sets));
       save();
       renderProgram(app, id);
+    };
+  });
+  // Free text ("8-12", "5", "AMRAP") — deliberately not validated, and like
+  // the set-row inputs it writes on input without re-rendering, so typing
+  // never loses focus.
+  app.querySelectorAll('[data-reps]').forEach((el) => {
+    el.oninput = () => {
+      p.exercises[+el.dataset.reps].reps = el.value.trim();
+      save();
     };
   });
   enableDragReorder($('#dragList'), (from, to) => {
@@ -832,7 +934,7 @@ function openPicker(program, onClose) {
   $('#add', body).onclick = () => {
     chosen.forEach((id) => {
       if (!program.exercises.some((e) => e.exerciseId === id)) {
-        program.exercises.push({ exerciseId: id, sets: 3 });
+        program.exercises.push({ exerciseId: id, sets: 3, reps: '8-12' });
       }
     });
     save();
@@ -842,9 +944,201 @@ function openPicker(program, onClose) {
 }
 
 /* ============================================================
+   Plans
+   A plan is a rotation of programs run for a number of weeks — "10 weeks,
+   full body, 3x per week as A/B/C" is `weeks: 10, rotation: [A, B, C]`.
+   Every week runs the same rotation by design: progression comes from the
+   weight you put on the bar, not from authoring thirty separate workouts.
+
+   That makes the whole plan a flat, ordered queue of `weeks x rotation`
+   sessions, so one integer — `progress`, the number completed — is enough to
+   place you in it. Slot n is week `n / rotation.length + 1`, letter
+   `n % rotation.length`. Nothing else needs storing.
+
+   `rotation` holds program ids rather than copies, so editing a program
+   updates it everywhere it's used. Ids can repeat (A/B/A is legal), and a
+   program deleted out from under a plan leaves a hole the UI labels rather
+   than crashing on.
+   ============================================================ */
+const DAY_LETTERS = 'ABCDEFGH';
+const programById = (id) => state.programs.find((p) => p.id === id);
+const planTotal = (plan) => plan.weeks * plan.rotation.length;
+const planWeekOf = (plan, slot) => Math.floor(slot / plan.rotation.length) + 1;
+const planLetterOf = (plan, slot) => DAY_LETTERS[slot % plan.rotation.length] || '?';
+const planDone = (plan) => Math.min(plan.progress || 0, planTotal(plan));
+// Snapshotted onto the session so history stays readable even if the plan is
+// later resized or deleted.
+const planSlotLabel = (plan, slot) => `Week ${planWeekOf(plan, slot)} · ${planLetterOf(plan, slot)}`;
+
+function renderPlan(app, id) {
+  const plan = state.plans.find((x) => x.id === id);
+  if (!plan) return go('home');
+  $('#title').textContent = 'Edit plan';
+
+  const total = planTotal(plan);
+  const done = planDone(plan);
+
+  app.innerHTML = `
+    <label class="field">
+      <span>Plan name</span>
+      <input type="text" id="planName" value="${esc(plan.name)}" placeholder="e.g. 10 Week Full Body" autocomplete="off">
+    </label>
+
+    <h2 class="section">Length</h2>
+    <div class="card">
+      <div class="row" style="gap:6px">
+        <button class="btn sm grow" data-weeks="-1">−</button>
+        <div style="min-width:96px;text-align:center;font-weight:600">${plan.weeks} week${plan.weeks === 1 ? '' : 's'}</div>
+        <button class="btn sm grow" data-weeks="1">+</button>
+      </div>
+      <div class="sub" style="text-align:center;margin-top:10px">${plan.rotation.length
+        ? `${plan.rotation.length}× per week · ${total} workouts in total`
+        : 'Add workouts below to build the weekly rotation'}</div>
+    </div>
+
+    <h2 class="section">Weekly rotation${plan.rotation.length > 1 ? ' · drag ⠿ to reorder' : ''}</h2>
+    <div id="dragList">
+    ${plan.rotation.length ? plan.rotation.map((pid, i) => {
+      const p = programById(pid);
+      return `
+      <div class="card drag-item">
+        <div class="row">
+          <div class="grip" aria-label="Drag to reorder">⠿</div>
+          <div class="day-letter">${DAY_LETTERS[i] || '?'}</div>
+          <div class="grow">
+            <div class="title truncate">${p ? esc(p.name) : 'Deleted program'}</div>
+            <div class="sub truncate">${p
+              ? `${p.exercises.length} exercise${p.exercises.length === 1 ? '' : 's'} · ${p.exercises.reduce((t, e) => t + e.sets, 0)} sets`
+              : 'No longer exists — remove it'}</div>
+          </div>
+          <button class="btn sm ghost" data-rot-remove="${i}" aria-label="Remove" style="color:var(--muted);padding:8px 11px">✕</button>
+        </div>
+      </div>`;
+    }).join('') : `<div class="empty" style="padding:26px">
+        <div>No workouts yet</div>
+        <div class="sub">A plan cycles through programs you've already built.</div>
+      </div>`}
+    </div>
+    <button class="btn block" id="addRot">+ Add workout to rotation</button>
+
+    ${total ? `
+      <h2 class="section">Schedule</h2>
+      <div class="card" style="padding:10px 12px">
+        ${Array.from({ length: plan.weeks }, (_, w) => `
+          <div class="week-row">
+            <div class="week-no">W${w + 1}</div>
+            <div class="week-days">
+              ${plan.rotation.map((pid, d) => {
+                const slot = w * plan.rotation.length + d;
+                return `<button class="day-pill ${slot < done ? 'done' : slot === done ? 'now' : ''}"
+                          data-slot="${slot}" aria-label="${esc(planSlotLabel(plan, slot))}">${DAY_LETTERS[d] || '?'}</button>`;
+              }).join('')}
+            </div>
+          </div>`).join('')}
+      </div>
+      <div class="sub" style="text-align:center;margin-top:8px">Tap any workout to start it</div>
+      ${done ? `<button class="btn block sm ghost" id="resetPlan" style="margin-top:10px">Reset progress</button>` : ''}
+    ` : ''}
+
+    <div class="row" style="gap:10px;margin-top:22px">
+      <button class="btn danger grow" id="delPlan">Delete plan</button>
+      <button class="btn primary grow" id="donePlan">Done</button>
+    </div>`;
+
+  const nameInput = $('#planName');
+  nameInput.oninput = () => { plan.name = nameInput.value; save(); };
+  if (!plan.name) nameInput.focus();
+
+  app.querySelectorAll('[data-weeks]').forEach((el) => {
+    el.onclick = () => {
+      plan.weeks = Math.min(52, Math.max(1, plan.weeks + +el.dataset.weeks));
+      save();
+      renderPlan(app, id);
+    };
+  });
+  enableDragReorder($('#dragList'), (from, to) => {
+    const [moved] = plan.rotation.splice(from, 1);
+    plan.rotation.splice(to, 0, moved);
+    save();
+    renderPlan(app, id);
+  });
+  app.querySelectorAll('[data-rot-remove]').forEach((el) => {
+    el.onclick = () => {
+      plan.rotation.splice(+el.dataset.rotRemove, 1);
+      save();
+      renderPlan(app, id);
+    };
+  });
+  app.querySelectorAll('[data-slot]').forEach((el) => {
+    el.onclick = () => {
+      const slot = +el.dataset.slot;
+      startSession(plan.rotation[slot % plan.rotation.length], plan, slot);
+    };
+  });
+  $('#addRot').onclick = () => openProgramPicker((pid) => {
+    plan.rotation.push(pid);
+    save();
+    renderPlan(app, id);
+  });
+  if ($('#resetPlan')) {
+    $('#resetPlan').onclick = () => {
+      confirmModal('Reset progress?', 'The plan starts again from week 1. Logged workouts stay in your history.', () => {
+        plan.progress = 0;
+        save();
+        renderPlan(app, id);
+      }, 'Reset');
+    };
+  }
+  $('#donePlan').onclick = () => {
+    if (!plan.name.trim()) plan.name = 'Untitled plan';
+    save();
+    go('home');
+  };
+  $('#delPlan').onclick = () => {
+    confirmModal('Delete this plan?', 'The programs it uses and your logged workouts both stay.', () => {
+      state.plans = state.plans.filter((x) => x.id !== plan.id);
+      save();
+      go('home');
+    });
+  };
+}
+
+/* Single-select list of existing programs, for building a rotation. */
+function openProgramPicker(onPick) {
+  const body = document.createElement('div');
+  body.className = 'modal-back';
+  body.innerHTML = `
+    <div class="modal">
+      <h3>Add to rotation</h3>
+      ${state.programs.length
+        ? state.programs.map((p) => `
+          <div class="pick-item" data-id="${p.id}">
+            <div class="grow">
+              <div class="title truncate" style="font-size:15px">${esc(p.name)}</div>
+              <div class="sub">${p.exercises.length} exercise${p.exercises.length === 1 ? '' : 's'}</div>
+            </div>
+            <div class="sub" style="margin:0">＋</div>
+          </div>`).join('')
+        : `<div class="empty" style="padding:24px">
+             <div>No programs yet</div>
+             <div class="sub">Build a program first — a plan is made of them.</div>
+           </div>`}
+      <div class="modal-actions"><button class="btn" id="cancel">Cancel</button></div>
+    </div>`;
+  $('#modalRoot').appendChild(body);
+
+  const close = () => body.remove();
+  body.querySelectorAll('.pick-item').forEach((el) => {
+    el.onclick = () => { close(); onPick(el.dataset.id); };
+  });
+  $('#cancel', body).onclick = close;
+  body.onclick = (e) => { if (e.target === body) close(); };
+}
+
+/* ============================================================
    Session
    ============================================================ */
-function startSession(programId) {
+function startSession(programId, plan, slot) {
   const p = state.programs.find((x) => x.id === programId);
   if (!p) return;
   if (!p.exercises.length) {
@@ -857,8 +1151,13 @@ function startSession(programId) {
       programId: p.id,
       programName: p.name,
       startedAt: Date.now(),
+      ...(plan ? { planId: plan.id, planSlot: slot, planLabel: planSlotLabel(plan, slot) } : {}),
       entries: p.exercises.map((item) => ({
         exerciseId: item.exerciseId,
+        // Snapshot of the program's target at the time the session started —
+        // editing the program later must not rewrite what you were told to do
+        // in a workout you've already logged.
+        target: item.reps || '',
         sets: Array.from({ length: item.sets }, () => ({ weight: '', reps: '', done: false })),
       })),
     };
@@ -902,7 +1201,7 @@ function renderSession(app) {
   app.innerHTML = `
     <div class="card" style="padding:11px 14px">
       <div class="row between">
-        <div class="sub" style="margin:0">${doneSets(s)}/${totalSets(s)} sets · ${Math.round(volume(s)).toLocaleString()} ${unit()} volume</div>
+        <div class="sub" style="margin:0">${s.planLabel ? esc(s.planLabel) + ' · ' : ''}${doneSets(s)}/${totalSets(s)} sets · ${Math.round(volume(s)).toLocaleString()} ${unit()} volume</div>
         <div class="sub" style="margin:0" id="elapsed">${fmtDuration(Date.now() - s.startedAt)}</div>
       </div>
     </div>
@@ -917,6 +1216,8 @@ function renderSession(app) {
             <div class="title truncate">${esc(ex.name)}</div>
             <div class="badge">${esc(ex.muscle)}${prev ? ' · last ' + esc(fmtDate(prev.date).toLowerCase()) : ' · first time'}</div>
           </div>
+          ${entry.target ? `<div class="target-pill">${entry.sets.length} × ${esc(entry.target)}</div>` : ''}
+          ${prev ? `<button class="chart-btn" data-chart="${entry.exerciseId}" aria-label="Progress for ${esc(ex.name)}">${TREND_ICON}</button>` : ''}
         </div>
         <div class="set-head"><div>Set</div><div>${unit()}</div><div>Reps</div><div></div></div>
         ${entry.sets.map((set, si) => {
@@ -926,7 +1227,8 @@ function renderSession(app) {
             <div class="setno">${si + 1}</div>
             <input type="number" inputmode="decimal" step="any" min="0" placeholder="${p ? esc(p.weight) : '—'}"
                    value="${esc(set.weight)}" data-f="weight" data-e="${ei}" data-s="${si}">
-            <input type="number" inputmode="numeric" step="1" min="0" placeholder="${p ? esc(p.reps) : '—'}"
+            <input type="number" inputmode="numeric" step="1" min="0"
+                   placeholder="${entry.target ? esc(entry.target) : (p ? esc(p.reps) : '—')}"
                    value="${esc(set.reps)}" data-f="reps" data-e="${ei}" data-s="${si}">
             <button class="tick ${set.done ? 'on' : ''}" data-done="${ei}-${si}">✓</button>
           </div>
@@ -962,17 +1264,24 @@ function renderSession(app) {
       set.done = !set.done;
 
       if (set.done) {
-        // Fall back to the placeholder (last time's numbers) if left blank.
+        // Fall back to whatever the placeholder was showing if left blank, so
+        // ticking a set never records something other than what you saw.
+        // Reps prefer the target (its low end — "8-12" isn't a number);
+        // weight has no target to draw on, so it still uses last time's.
         const prev = lastPerformance(entry.exerciseId);
         const p = prev ? prev.sets[Math.min(si, prev.sets.length - 1)] : null;
         if (set.weight === '' && p) set.weight = p.weight;
-        if (set.reps === '' && p) set.reps = p.reps;
+        if (set.reps === '') set.reps = targetReps(entry.target) || (p ? p.reps : '');
         timer.reset(true);           // rest timer restarts on every completed set
       }
       save();
       renderSession(app);
       timer.render();
     };
+  });
+
+  app.querySelectorAll('[data-chart]').forEach((el) => {
+    el.onclick = () => openExercise(el.dataset.chart, { name: 'session', arg: null });
   });
 
   app.querySelectorAll('[data-addset]').forEach((el) => {
@@ -1017,6 +1326,12 @@ function finishSession() {
     s.prs = findPRs(s);              // measured against history before this session lands
     state.history.unshift(s);
     state.active = null;
+    // Advance the plan, but never backwards: replaying an earlier week
+    // shouldn't undo progress you've already made.
+    if (s.planId) {
+      const plan = state.plans.find((x) => x.id === s.planId);
+      if (plan) plan.progress = Math.max(plan.progress || 0, s.planSlot + 1);
+    }
     save();
     timer.reset(false);
     setWakeLock(false);
@@ -1054,7 +1369,7 @@ function renderHistory(app) {
     el.onclick = () => go('historyDetail', el.dataset.open);
   });
   app.querySelectorAll('[data-ex]').forEach((el) => {
-    el.onclick = () => { chartSel = null; go('exercise', el.dataset.ex); };
+    el.onclick = () => openExercise(el.dataset.ex, { name: 'history', arg: null });
   });
 }
 
@@ -1078,7 +1393,7 @@ function logHTML() {
           <div class="grow">
             <div class="title truncate">${esc(s.programName || 'Workout')}
               ${s.prs && s.prs.length ? `<span class="pb-flag">${s.prs.length} PB</span>` : ''}</div>
-            <div class="sub">${fmtDate(s.finishedAt || s.startedAt)} · ${doneSets(s)} sets · ${Math.round(v).toLocaleString()} ${unit()}
+            <div class="sub">${s.planLabel ? esc(s.planLabel) + ' · ' : ''}${fmtDate(s.finishedAt || s.startedAt)} · ${doneSets(s)} sets · ${Math.round(v).toLocaleString()} ${unit()}
               ${prev ? ' · ' + deltaHTML(v, volume(prev), ' ' + unit()) : ''}</div>
           </div>
           <div class="sub">${s.finishedAt ? fmtDuration(s.finishedAt - s.startedAt) : ''} ›</div>
@@ -1252,7 +1567,7 @@ function renderHistoryDetail(app, id) {
   app.innerHTML = `
     <div class="card">
       <div class="title">${fmtDate(s.finishedAt || s.startedAt)}</div>
-      <div class="sub">${new Date(s.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+      <div class="sub">${s.planLabel ? esc(s.planLabel) + ' · ' : ''}${new Date(s.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
         · ${s.finishedAt ? fmtDuration(s.finishedAt - s.startedAt) : ''}</div>
       <div class="stat-grid" style="margin-top:12px">
         <div class="stat"><div class="v">${doneSets(s)}</div><div class="k">sets</div></div>
@@ -1312,7 +1627,7 @@ function renderHistoryDetail(app, id) {
       <div class="card ex-card">
         <div class="ex-head">
           <div class="grow"><div class="title truncate">${esc(exerciseById(e.exerciseId).name)}</div></div>
-          <button class="btn sm ghost" data-ex="${e.exerciseId}">Progress ›</button>
+          <button class="btn sm ghost" data-ex="${e.exerciseId}">${TREND_ICON} Progress</button>
         </div>
         ${e.sets.map((set, i) => `
           <div class="set-row" style="grid-template-columns:30px 1fr">
@@ -1323,7 +1638,7 @@ function renderHistoryDetail(app, id) {
     <button class="btn danger block" id="delSession" style="margin-top:16px">Delete workout</button>`;
 
   app.querySelectorAll('[data-ex]').forEach((el) => {
-    el.onclick = () => { chartSel = null; go('exercise', el.dataset.ex); };
+    el.onclick = () => openExercise(el.dataset.ex, { name: 'historyDetail', arg: s.id });
   });
 
   $('#delSession').onclick = () => {
@@ -1446,8 +1761,10 @@ function openSettings() {
 document.querySelectorAll('.tab').forEach((t) => {
   t.onclick = () => go(t.dataset.view);
 });
-$('#backBtn').onclick = () =>
-  go(view.name === 'historyDetail' || view.name === 'exercise' ? 'history' : 'home');
+$('#backBtn').onclick = () => {
+  if (view.name === 'exercise') return go(exerciseReturn.name, exerciseReturn.arg);
+  return go(view.name === 'historyDetail' ? 'history' : 'home');
+};
 $('#settingsBtn').onclick = openSettings;
 
 $('#timerToggle').onclick = () => (timer.running ? timer.pause() : timer.start());

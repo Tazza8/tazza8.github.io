@@ -1,4 +1,4 @@
-const CACHE_NAME = 'evolv-v6';
+const CACHE_NAME = 'evolv-v7';
 const ASSETS = [
   '.',
   'index.html',

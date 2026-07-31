@@ -255,6 +255,59 @@ label.field > span {
 }
 .pick-item.on .check { background: var(--brand); border-color: transparent; color: var(--on-accent); }
 
+/* ---------- plans ---------- */
+/* Progress through a whole plan, on its home-screen card. */
+.plan-bar {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  overflow: hidden;
+  margin-top: 12px;
+}
+.plan-bar > div { height: 100%; background: var(--brand); border-radius: 3px; }
+
+/* The A/B/C marker on a rotation entry. */
+.day-letter {
+  flex: 0 0 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--accent-dim);
+  color: var(--accent-soft);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.week-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+}
+.week-no {
+  flex: 0 0 34px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: var(--track);
+  color: var(--muted);
+}
+.week-days { display: flex; gap: 6px; flex-wrap: wrap; }
+.day-pill {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.day-pill.done { background: var(--accent-dim); border-color: transparent; color: var(--accent-soft); }
+/* The one you're up to — the only filled pill, so it reads at a glance. */
+.day-pill.now { background: var(--brand); border-color: transparent; color: var(--on-accent); }
+
 /* ---------- session ---------- */
 .ex-card { padding: 0; overflow: hidden; }
 .ex-head {
@@ -266,6 +319,43 @@ label.field > span {
 .badge {
   font-size: 10px; font-weight: 700; letter-spacing: var(--track);
   color: var(--muted); text-transform: uppercase;
+}
+/* The prescribed "3 × 8-12" on an exercise during a workout. */
+.target-pill {
+  flex: 0 0 auto;
+  background: var(--accent-dim);
+  color: var(--accent-soft);
+  border-radius: 20px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* Opens an exercise's progress chart from inside a live session. */
+.chart-btn {
+  flex: 0 0 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.chart-btn:active { color: var(--accent); background: var(--surface); }
+
+/* Target-reps field in the program editor, sized to sit in the sets row.
+   Qualified with `input` to outweigh the `input[type="text"]` base rule
+   without reaching for !important. Font size stays at the inherited 16px on
+   purpose — iOS Safari zooms the page whenever you focus an input smaller
+   than that. */
+input.target-input {
+  flex: 0 0 104px;
+  width: 104px;
+  text-align: center;
+  padding: 9px 6px;
 }
 
 .set-row {
